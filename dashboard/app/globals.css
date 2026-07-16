@@ -7,34 +7,13 @@ html {
 }
 
 body {
-  background-color: rgb(15, 23, 42);
+  background-color: rgb(2, 6, 23);
   color: rgb(226, 232, 240);
 }
 
-.workflow-card {
-  @apply border border-slate-700 rounded-lg p-4 bg-slate-800 hover:bg-slate-700 transition;
-}
-
-.status-badge {
-  @apply px-3 py-1 rounded-full text-sm font-medium;
-}
-
-.status-running {
-  @apply bg-blue-500/20 text-blue-300;
-}
-
-.status-completed {
-  @apply bg-green-500/20 text-green-300;
-}
-
-.status-failed {
-  @apply bg-red-500/20 text-red-300;
-}
-
-.status-pending {
-  @apply bg-yellow-500/20 text-yellow-300;
-}
-
-.metric-card {
-  @apply bg-slate-800 rounded-lg p-4 border border-slate-700;
+.bento-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-auto-rows: min-content;
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import ApprovalCard from '@/components/ApprovalCard'
+import GlassCard from '@/components/GlassCard'
 import { AlertCircle, CheckCircle } from 'lucide-react'
 
 interface ApprovalRequest {
@@ -115,89 +116,69 @@ export default function ApprovalsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950/10 to-slate-950">
-      {/* Animated background */}
-      <div className="fixed inset-0 -z-10">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full filter blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full filter blur-3xl" />
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="space-y-2">
+        <h1 className="text-4xl font-bold text-slate-100">Approvals Required</h1>
+        <p className="text-slate-400">
+          {approvals.length} pending • {completed.length} completed today
+        </p>
       </div>
 
-      <div className="relative z-10 max-w-7xl mx-auto px-4 py-8 space-y-8">
-        {/* Header */}
-        <div className="space-y-2">
-          <h1 className="text-4xl font-bold text-slate-100">
-            Approvals Required
-          </h1>
-          <p className="text-slate-400">
-            {approvals.length} pending • {completed.length} completed today
-          </p>
-        </div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="rounded-2xl backdrop-blur-xl bg-gradient-to-br from-red-500/20 to-red-600/10 border border-red-500/30 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-red-300 font-medium">Critical</p>
-                <p className="text-2xl font-bold text-red-200">
-                  {approvals.filter(a => a.risk_level === 'CRITICAL').length}
-                </p>
-              </div>
-              <AlertCircle className="w-8 h-8 text-red-400" />
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <GlassCard tone="red" className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-red-300 font-medium">Critical</p>
+              <p className="text-2xl font-bold text-red-200">
+                {approvals.filter(a => a.risk_level === 'CRITICAL').length}
+              </p>
             </div>
+            <AlertCircle className="w-8 h-8 text-red-400" />
           </div>
+        </GlassCard>
 
-          <div className="rounded-2xl backdrop-blur-xl bg-gradient-to-br from-blue-500/20 to-blue-600/10 border border-blue-500/30 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-blue-300 font-medium">Pending</p>
-                <p className="text-2xl font-bold text-blue-200">{approvals.length}</p>
-              </div>
-              <AlertCircle className="w-8 h-8 text-blue-400" />
+        <GlassCard tone="blue" className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-blue-300 font-medium">Pending</p>
+              <p className="text-2xl font-bold text-blue-200">{approvals.length}</p>
             </div>
+            <AlertCircle className="w-8 h-8 text-blue-400" />
           </div>
+        </GlassCard>
 
-          <div className="rounded-2xl backdrop-blur-xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 border border-emerald-500/30 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-emerald-300 font-medium">Completed</p>
-                <p className="text-2xl font-bold text-emerald-200">{completed.length}</p>
-              </div>
-              <CheckCircle className="w-8 h-8 text-emerald-400" />
+        <GlassCard tone="emerald" className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-emerald-300 font-medium">Completed</p>
+              <p className="text-2xl font-bold text-emerald-200">{completed.length}</p>
             </div>
+            <CheckCircle className="w-8 h-8 text-emerald-400" />
           </div>
-        </div>
-
-        {/* Bento Grid of Approval Cards */}
-        {approvals.length > 0 ? (
-          <div className="grid gap-4 auto-rows-min" style={{
-            gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
-            gridAutoRows: 'auto'
-          }}>
-            {approvals.map((approval) => (
-              <div 
-                key={approval.request_id}
-                style={{
-                  gridColumn: approval.risk_level === 'CRITICAL' ? 'span 1' : 'span 1',
-                  gridRow: approval.risk_level === 'CRITICAL' ? 'span 1' : 'span 1'
-                }}
-              >
-                <ApprovalCard
-                  {...approval}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="rounded-2xl backdrop-blur-xl bg-gradient-to-br from-slate-700/20 to-slate-800/10 border border-slate-600/30 p-12 text-center">
-            <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
-            <p className="text-slate-300 font-medium">All approvals complete</p>
-            <p className="text-slate-400 text-sm mt-1">No pending requests</p>
-          </div>
-        )}
+        </GlassCard>
       </div>
+
+      {/* Bento Grid of Approval Cards */}
+      {approvals.length > 0 ? (
+        <div className="bento-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))' }}>
+          {approvals.map((approval) => (
+            <ApprovalCard
+              key={approval.request_id}
+              {...approval}
+              onApprove={handleApprove}
+              onReject={handleReject}
+            />
+          ))}
+        </div>
+      ) : (
+        <GlassCard tone="slate" className="p-12 text-center">
+          <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
+          <p className="text-slate-300 font-medium">All approvals complete</p>
+          <p className="text-slate-400 text-sm mt-1">No pending requests</p>
+        </GlassCard>
+      )}
     </div>
   )
 }

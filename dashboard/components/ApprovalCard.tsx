@@ -2,6 +2,7 @@
 
 import { CheckCircle, XCircle, AlertCircle, AlertTriangle, Clock } from 'lucide-react'
 import { useState } from 'react'
+import GlassCard, { GlassTone } from './GlassCard'
 
 interface ApprovalCardProps {
   request_id: string
@@ -14,6 +15,27 @@ interface ApprovalCardProps {
   approval_window_minutes?: number
   onApprove?: (request_id: string) => void
   onReject?: (request_id: string) => void
+}
+
+const RISK_TONE: Record<string, GlassTone> = {
+  CRITICAL: 'red',
+  HIGH: 'orange',
+  MEDIUM: 'amber',
+  LOW: 'emerald',
+}
+
+const RISK_ICON: Record<string, JSX.Element> = {
+  CRITICAL: <AlertTriangle className="w-5 h-5 text-red-400" />,
+  HIGH: <AlertCircle className="w-5 h-5 text-orange-400" />,
+  MEDIUM: <Clock className="w-5 h-5 text-amber-400" />,
+  LOW: <CheckCircle className="w-5 h-5 text-emerald-400" />,
+}
+
+const RISK_BADGE: Record<string, string> = {
+  CRITICAL: 'bg-red-500/20 text-red-300',
+  HIGH: 'bg-orange-500/20 text-orange-300',
+  MEDIUM: 'bg-amber-500/20 text-amber-300',
+  LOW: 'bg-emerald-500/20 text-emerald-300',
 }
 
 export default function ApprovalCard({
@@ -31,50 +53,7 @@ export default function ApprovalCard({
   const [isLoading, setIsLoading] = useState(false)
   const [decided, setDecided] = useState<'approved' | 'rejected' | null>(null)
 
-  const getRiskColor = (level: string) => {
-    switch (level) {
-      case 'CRITICAL':
-        return 'from-red-500/20 to-red-600/10 border-red-500/30'
-      case 'HIGH':
-        return 'from-orange-500/20 to-orange-600/10 border-orange-500/30'
-      case 'MEDIUM':
-        return 'from-amber-500/20 to-amber-600/10 border-amber-500/30'
-      case 'LOW':
-        return 'from-emerald-500/20 to-emerald-600/10 border-emerald-500/30'
-      default:
-        return 'from-blue-500/20 to-blue-600/10 border-blue-500/30'
-    }
-  }
-
-  const getRiskIcon = (level: string) => {
-    switch (level) {
-      case 'CRITICAL':
-        return <AlertTriangle className="w-5 h-5 text-red-400" />
-      case 'HIGH':
-        return <AlertCircle className="w-5 h-5 text-orange-400" />
-      case 'MEDIUM':
-        return <Clock className="w-5 h-5 text-amber-400" />
-      case 'LOW':
-        return <CheckCircle className="w-5 h-5 text-emerald-400" />
-      default:
-        return <AlertCircle className="w-5 h-5 text-blue-400" />
-    }
-  }
-
-  const getRiskBadgeColor = (level: string) => {
-    switch (level) {
-      case 'CRITICAL':
-        return 'bg-red-500/20 text-red-300'
-      case 'HIGH':
-        return 'bg-orange-500/20 text-orange-300'
-      case 'MEDIUM':
-        return 'bg-amber-500/20 text-amber-300'
-      case 'LOW':
-        return 'bg-emerald-500/20 text-emerald-300'
-      default:
-        return 'bg-blue-500/20 text-blue-300'
-    }
-  }
+  const tone = RISK_TONE[risk_level] ?? 'blue'
 
   const handleApprove = async () => {
     setIsLoading(true)
@@ -100,52 +79,34 @@ export default function ApprovalCard({
 
   if (decided === 'approved') {
     return (
-      <div className={`
-        relative overflow-hidden rounded-2xl backdrop-blur-xl
-        bg-gradient-to-br from-emerald-500/20 to-emerald-600/10
-        border border-emerald-500/30 p-6
-        flex items-center justify-center min-h-[280px]
-      `}>
+      <GlassCard tone="emerald" className="p-6 flex items-center justify-center min-h-[280px]">
         <div className="text-center">
           <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto mb-3 animate-bounce" />
           <p className="text-emerald-300 font-medium">Approved</p>
         </div>
-      </div>
+      </GlassCard>
     )
   }
 
   if (decided === 'rejected') {
     return (
-      <div className={`
-        relative overflow-hidden rounded-2xl backdrop-blur-xl
-        bg-gradient-to-br from-red-500/20 to-red-600/10
-        border border-red-500/30 p-6
-        flex items-center justify-center min-h-[280px]
-      `}>
+      <GlassCard tone="red" className="p-6 flex items-center justify-center min-h-[280px]">
         <div className="text-center">
           <XCircle className="w-12 h-12 text-red-400 mx-auto mb-3 animate-bounce" />
           <p className="text-red-300 font-medium">Rejected</p>
         </div>
-      </div>
+      </GlassCard>
     )
   }
 
   return (
-    <div className={`
-      relative overflow-hidden rounded-2xl backdrop-blur-xl
-      bg-gradient-to-br ${getRiskColor(risk_level)}
-      border p-6 transition-all duration-300 hover:shadow-lg
-      hover:shadow-white/5 group
-    `}>
-      {/* Glass effect overlay */}
-      <div className="absolute inset-0 bg-white/[0.01] pointer-events-none" />
-
-      <div className="relative z-10 space-y-4">
+    <GlassCard tone={tone} hover className="p-6 group">
+      <div className="space-y-4">
         {/* Header: Agent info + Risk badge */}
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3 flex-1">
             <div className="w-10 h-10 rounded-lg bg-white/10 backdrop-blur flex items-center justify-center">
-              {getRiskIcon(risk_level)}
+              {RISK_ICON[risk_level] ?? <AlertCircle className="w-5 h-5 text-blue-400" />}
             </div>
             <div>
               <h3 className="text-sm font-semibold text-slate-100">
@@ -154,11 +115,7 @@ export default function ApprovalCard({
               <p className="text-xs text-slate-400">{agent_id}</p>
             </div>
           </div>
-          <span className={`
-            px-3 py-1 rounded-full text-xs font-medium
-            ${getRiskBadgeColor(risk_level)}
-            backdrop-blur-sm
-          `}>
+          <span className={`px-3 py-1 rounded-full text-xs font-medium backdrop-blur-sm ${RISK_BADGE[risk_level] ?? 'bg-blue-500/20 text-blue-300'}`}>
             {risk_level}
           </span>
         </div>
@@ -196,33 +153,19 @@ export default function ApprovalCard({
           <button
             onClick={handleReject}
             disabled={isLoading}
-            className={`
-              flex-1 py-2.5 rounded-lg font-medium text-sm
-              transition-all duration-200
-              bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200
-              border border-red-500/30 hover:border-red-500/50
-              disabled:opacity-50 disabled:cursor-not-allowed
-              backdrop-blur-sm
-            `}
+            className="flex-1 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200 border border-red-500/30 hover:border-red-500/50 disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm"
           >
             {isLoading ? 'Processing...' : 'Reject'}
           </button>
           <button
             onClick={handleApprove}
             disabled={isLoading}
-            className={`
-              flex-1 py-2.5 rounded-lg font-medium text-sm
-              transition-all duration-200
-              bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 hover:text-emerald-200
-              border border-emerald-500/30 hover:border-emerald-500/50
-              disabled:opacity-50 disabled:cursor-not-allowed
-              backdrop-blur-sm
-            `}
+            className="flex-1 py-2.5 rounded-lg font-medium text-sm transition-all duration-200 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 hover:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm"
           >
             {isLoading ? 'Processing...' : 'Approve'}
           </button>
         </div>
       </div>
-    </div>
+    </GlassCard>
   )
 }
