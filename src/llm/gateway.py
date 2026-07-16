@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List
 import litellm
 from litellm import completion, acompletion
 import asyncio
+import time
 
 from src.config import settings
 from src.llm.models import get_model_config, get_model_for_task, ModelCapability
@@ -153,7 +154,7 @@ class LLMGateway:
         model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Chat-style interaction with LLM.
+        Chat-style interaction with LLM (with Langfuse tracing).
 
         Args:
             workflow_id: Workflow ID
@@ -168,6 +169,8 @@ class LLMGateway:
             Response with generated text and metadata
         """
         try:
+            call_start = time.time()
+
             if not model:
                 model = get_model_for_task(task_type)
 
@@ -191,6 +194,7 @@ class LLMGateway:
             generated_text = response.choices[0].message.content
             input_tokens = response.usage.prompt_tokens
             output_tokens = response.usage.completion_tokens
+            latency_ms = int((time.time() - call_start) * 1000)
 
             cost_tracker = get_cost_tracker()
             cost_data = cost_tracker.record_usage(
@@ -200,6 +204,26 @@ class LLMGateway:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
+
+            # Trace to Langfuse
+            if settings.ENABLE_LANGFUSE_TRACING:
+                try:
+                    from src.observability.langfuse_client import get_langfuse_client
+                    langfuse = get_langfuse_client()
+                    langfuse.trace_llm_call(
+                        workflow_id=workflow_id,
+                        agent_id=agent_id,
+                        model=model,
+                        prompt=messages[-1].get("content", "") if messages else "",
+                        output=generated_text,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cost=cost_data["cost"],
+                        latency_ms=latency_ms,
+                    )
+                except Exception as e:
+                    # Don't fail if Langfuse tracing fails
+                    pass
 
             return {
                 "text": generated_text,

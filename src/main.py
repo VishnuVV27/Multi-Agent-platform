@@ -84,11 +84,13 @@ from src.routes.workflows import router as workflows_router
 from src.routes.tools import router as tools_router
 from src.routes.approvals import router as approvals_router
 from src.routes.memory import router as memory_router
+from src.routes.observability import router as observability_router
 
 app.include_router(workflows_router)
 app.include_router(tools_router)
 app.include_router(approvals_router)
 app.include_router(memory_router)
+app.include_router(observability_router)
 
 
 if __name__ == "__main__":
