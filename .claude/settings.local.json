@@ -5,7 +5,8 @@
       "Bash(git add *)",
       "Bash(git commit -m 'Initial project scaffold: FastAPI + Temporal + Postgres + Redis + Kafka *)",
       "Bash(git commit -m 'Step 2: Agent Contract & Supervisor Agent *)",
-      "Bash(git commit -m 'Step 3: Research Agent + Web Search Tool \\(End-to-End Working\\) *)"
+      "Bash(git commit -m 'Step 3: Research Agent + Web Search Tool \\(End-to-End Working\\) *)",
+      "Bash(git commit -m 'Add QUICKSTART guide for testing end-to-end workflow *)"
     ]
   }
 }
