@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import json
 
 from src.agents.base import (
@@ -8,6 +8,13 @@ from src.agents.base import (
     AgentStatus,
     AgentCapability,
     register_agent,
+)
+from src.llm.gateway import get_llm_gateway
+from src.agents.supervisor_prompts import (
+    get_supervisor_planning_prompt,
+    SUPERVISOR_SYSTEM_PROMPT,
+    validate_generated_dag,
+    GOOD_DAG_PATTERNS,
 )
 
 
@@ -25,23 +32,23 @@ class TaskDefinition(dict):
 @register_agent
 class SupervisorAgent(BaseAgent):
     """
-    Supervisor Agent: Analyzes user prompts and generates task DAGs.
+    Supervisor Agent: Analyzes user prompts and generates task DAGs using LLM.
 
-    For MVP: Uses hardcoded rules to map requests to agent pipelines.
-    Later: Will use LLM to dynamically generate DAGs.
+    Now LLM-powered: Uses Claude to intelligently plan multi-agent workflows.
 
     Examples:
     - "Research competitors" → [research_agent]
     - "Research and analyze competitors" → [research_agent → analysis_agent]
     - "Write a report on X" → [research_agent → writer_agent]
+    - Natural language requests → Optimal agent pipeline
     """
 
     AGENT_ID = "supervisor_agent"
     AGENT_NAME = "Supervisor Agent"
-    DESCRIPTION = "Analyzes user requests and generates task DAGs for multi-agent execution"
+    DESCRIPTION = "Uses LLM to analyze user requests and generate optimal task DAGs"
     CAPABILITIES = [AgentCapability.PLANNING]
-    ALLOWED_TOOLS = []  # Supervisor doesn't need tools yet
-    VERSION = "1.0.0-hardcoded"
+    ALLOWED_TOOLS = []  # Supervisor doesn't need tools
+    VERSION = "2.0.0-llm-powered"  # Updated to LLM version
 
     # Hardcoded rules for MVP (will be replaced with LLM logic)
     KEYWORD_RULES = {
@@ -65,32 +72,37 @@ class SupervisorAgent(BaseAgent):
 
     async def execute(self, task_input: TaskInput) -> TaskOutput:
         """
-        Generate a task DAG based on the instruction.
+        Generate a task DAG using LLM-based planning.
 
-        Input: {instruction: "Research competitors and analyze them"}
+        Input: {instruction: "Research competitors and write a comprehensive report"}
         Output: {
             result: {
                 tasks: [
                     {id: "t1", agent: "research_agent", input: "..."},
-                    {id: "t2", agent: "analysis_agent", input: "...", depends_on: ["t1"]}
-                ]
+                    {id: "t2", agent: "writer_agent", input: "...", depends_on: ["t1"]}
+                ],
+                planning_method: "llm"
             }
         }
         """
         try:
-            instruction = task_input.instruction.lower()
+            instruction = task_input.instruction
 
-            # Step 1: Determine which agents are needed (hardcoded rules for MVP)
-            agents_needed = self._match_agents_to_request(instruction)
+            # Step 1: Use LLM to determine which agents are needed (NEW!)
+            agents_needed = await self._plan_with_llm(instruction, task_input)
 
             if not agents_needed:
-                # Default: assume research is always needed
+                # Fallback: use hardcoded rules
+                agents_needed = self._match_agents_to_request(instruction.lower())
+
+            if not agents_needed:
+                # Last resort: default to research
                 agents_needed = ["research_agent"]
 
             # Step 2: Build task DAG with dependencies
             task_dag = self._build_task_dag(
                 agents=agents_needed,
-                original_instruction=task_input.instruction,
+                original_instruction=instruction,
                 context=task_input.context,
             )
 
@@ -101,7 +113,8 @@ class SupervisorAgent(BaseAgent):
                 result={
                     "tasks": task_dag,
                     "agent_count": len(agents_needed),
-                    "planning_method": "hardcoded_rules",  # Will change to "llm" later
+                    "planning_method": "llm",  # Now LLM-powered!
+                    "agents_selected": agents_needed,
                 },
             )
 
@@ -228,10 +241,80 @@ class SupervisorAgent(BaseAgent):
         else:
             return instruction
 
+    async def _plan_with_llm(
+        self,
+        instruction: str,
+        task_input: TaskInput,
+    ) -> Optional[List[str]]:
+        """
+        Use LLM to plan the optimal agent pipeline.
+
+        Args:
+            instruction: User request
+            task_input: Task input for context
+
+        Returns:
+            List of agent IDs in execution order, or None if planning fails
+        """
+        try:
+            # Get LLM Gateway
+            llm_gateway = get_llm_gateway()
+
+            # Create planning prompt
+            planning_prompt = get_supervisor_planning_prompt(instruction)
+
+            # Call LLM for planning
+            response = await llm_gateway.chat(
+                workflow_id=task_input.workflow_id,
+                agent_id=self.AGENT_ID,
+                messages=[
+                    {"role": "system", "content": SUPERVISOR_SYSTEM_PROMPT},
+                    {"role": "user", "content": planning_prompt},
+                ],
+                task_type="reasoning",
+                max_tokens=500,
+            )
+
+            # Parse LLM response
+            response_text = response.get("text", "").strip()
+
+            # Try to extract JSON from response
+            try:
+                # Handle case where LLM wraps JSON in markdown code blocks
+                if "```json" in response_text:
+                    json_start = response_text.find("```json") + 7
+                    json_end = response_text.find("```", json_start)
+                    json_str = response_text[json_start:json_end].strip()
+                elif "```" in response_text:
+                    json_start = response_text.find("```") + 3
+                    json_end = response_text.find("```", json_start)
+                    json_str = response_text[json_start:json_end].strip()
+                else:
+                    json_str = response_text
+
+                plan = json.loads(json_str)
+                agents = plan.get("agents", [])
+
+                # Validate generated DAG
+                is_valid, error = validate_generated_dag(agents)
+                if not is_valid:
+                    print(f"LLM plan validation failed: {error}. Falling back to hardcoded rules.")
+                    return None
+
+                return agents
+
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse LLM response as JSON: {e}. Falling back to hardcoded rules.")
+                return None
+
+        except Exception as e:
+            print(f"LLM planning failed: {e}. Falling back to hardcoded rules.")
+            return None
+
     def get_manifest(self) -> Dict[str, Any]:
         """Return agent manifest."""
         return {
             **super().get_manifest(),
-            "planning_method": "hardcoded_rules",
-            "future_planning_method": "llm_powered",
+            "planning_method": "llm_powered",
+            "version": "2.0.0",
         }
