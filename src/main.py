@@ -79,8 +79,10 @@ async def root():
     }
 
 
-# Route imports (will be added as we build features)
-# from src.routes import workflows, approvals
+# Route imports
+from src.routes.workflows import router as workflows_router
+
+app.include_router(workflows_router)
 
 
 if __name__ == "__main__":
