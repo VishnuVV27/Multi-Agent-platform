@@ -3,7 +3,8 @@
     "allow": [
       "Bash(git init *)",
       "Bash(git add *)",
-      "Bash(git commit -m 'Initial project scaffold: FastAPI + Temporal + Postgres + Redis + Kafka *)"
+      "Bash(git commit -m 'Initial project scaffold: FastAPI + Temporal + Postgres + Redis + Kafka *)",
+      "Bash(git commit -m 'Step 2: Agent Contract & Supervisor Agent *)"
     ]
   }
 }
