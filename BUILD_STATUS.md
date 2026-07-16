@@ -2,7 +2,7 @@
 
 ## Completed Phases
 
-### ✅ Phase 1: Foundation (Steps 1-3)
+### ✅ Phase 1: Foundation (Steps 1-4)
 
 **Step 1: Infrastructure Scaffold** ✅
 - [x] Docker Compose with 5 services (Postgres, Redis, Kafka, Temporal, Zookeeper)
@@ -29,7 +29,17 @@
 - [x] Temporal worker process
 - [x] QUICKSTART guide with complete testing instructions
 
-**Result: End-to-end workflow is functional!**
+**Step 4: Agent Contract Formalization** ✅
+- [x] Agent Registry (service discovery for agents)
+- [x] Tool Registry (service discovery for tools)
+- [x] Comprehensive unit tests (TaskInput/TaskOutput, manifests, contract)
+- [x] Integration tests (agent execution, chaining, consistency)
+- [x] Contract validation for all agents
+- [x] Heartbeat and health tracking
+- [x] Capability-based agent discovery
+- [x] Pytest fixtures and conftest
+
+**Result: End-to-end workflow is functional with formally validated contracts!**
 ```
 User Prompt → Supervisor (plans) → Orchestrator (executes) → Research Agent → Results
 ```
@@ -38,15 +48,9 @@ User Prompt → Supervisor (plans) → Orchestrator (executes) → Research Agen
 
 ## Work In Progress
 
-### 🔄 Phase 2: Formalization (Step 4-6) - NEXT
+### 🔄 Phase 2: Production Features (Steps 5-6) - NEXT
 
-**Step 4: Formalize Agent Contract** (Ready to implement)
-- [ ] Unit tests for BaseAgent contract
-- [ ] Integration tests for agent execution
-- [ ] Test that all agents pass Pydantic validation
-- [ ] Verify contract consistency across agents
-
-**Step 5: LiteLLM Integration** (Ready)
+**Step 5: LiteLLM Integration** (Ready) - NEXT PRIORITY
 - [ ] Wrap LLM calls in LiteLLM gateway
 - [ ] Support multiple providers (OpenAI, Anthropic, etc.)
 - [ ] Model routing based on task requirements
