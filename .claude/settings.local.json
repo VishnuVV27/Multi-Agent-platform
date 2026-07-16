@@ -10,7 +10,9 @@
       "Bash(git commit -m 'Add BUILD_STATUS document tracking progress and next steps *)",
       "Bash(git commit -m 'Step 4: Agent Contract Formalization *)",
       "Bash(git commit -m 'Step 5: LiteLLM Integration with Cost Tracking *)",
-      "Bash(git commit -m 'Step 6: Enhanced Tool Gateway with RBAC & Metrics *)"
+      "Bash(git commit -m 'Step 6: Enhanced Tool Gateway with RBAC & Metrics *)",
+      "Bash(git commit -m 'Update BUILD_STATUS: Step 6 Enhanced Tool Gateway complete *)",
+      "Bash(git commit -m 'Step 7: Human-in-the-Loop Approval Workflow *)"
     ]
   }
 }

@@ -82,9 +82,11 @@ async def root():
 # Route imports
 from src.routes.workflows import router as workflows_router
 from src.routes.tools import router as tools_router
+from src.routes.approvals import router as approvals_router
 
 app.include_router(workflows_router)
 app.include_router(tools_router)
+app.include_router(approvals_router)
 
 
 if __name__ == "__main__":
