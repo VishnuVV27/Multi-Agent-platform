@@ -69,9 +69,14 @@ async def create_workflow(request: WorkflowCreateRequest) -> WorkflowCreateRespo
         )
 
         # Step 2: Execute Orchestrator workflow with task DAG
+        # Extract agents selected from supervisor result
+        agents_selected = supervisor_result.agents_selected if hasattr(supervisor_result, 'agents_selected') else []
+
         orchestrator_input = OrchestratorWorkflowInput(
             workflow_id=workflow_id,
+            user_request=request.prompt,  # Original user request for memory
             tasks=supervisor_result.tasks,
+            agents_selected=agents_selected,  # Agents selected for memory
         )
 
         # Start orchestrator (don't wait for completion yet)

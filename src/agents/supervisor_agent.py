@@ -249,6 +249,9 @@ class SupervisorAgent(BaseAgent):
         """
         Use LLM to plan the optimal agent pipeline.
 
+        Enhanced with memory context: retrieves similar past workflows
+        to inform planning decisions.
+
         Args:
             instruction: User request
             task_input: Task input for context
@@ -257,13 +260,55 @@ class SupervisorAgent(BaseAgent):
             List of agent IDs in execution order, or None if planning fails
         """
         try:
-            # Get LLM Gateway
+            # Step 1: Retrieve similar workflows from memory for context
+            memory_context = ""
+            try:
+                from src.memory.memory_store import MemoryStore
+                from src.memory.models import RetrievalRequest
+
+                memory_store = MemoryStore()
+                retrieval_request = RetrievalRequest(
+                    query=instruction,
+                    top_k=3,
+                    min_similarity=0.6,
+                    filter_success_only=True,  # Only learn from successful workflows
+                )
+
+                memory_response = await memory_store.retrieve_workflows(
+                    retrieval_request
+                )
+
+                # Format memory context for LLM
+                if memory_response.results:
+                    memory_context = "Here are 3 similar past requests and how they were handled:\n"
+                    for i, ranked in enumerate(memory_response.results, 1):
+                        memory = ranked.workflow_memory
+                        agents_str = ", ".join(memory.agents_selected)
+                        success_pct = memory.success_rate * 100
+                        memory_context += (
+                            f"{i}. Request: \"{memory.user_request}\"\n"
+                            f"   Agents used: [{agents_str}]\n"
+                            f"   Success rate: {success_pct:.0f}%\n"
+                            f"   Cost: ${memory.total_cost:.4f}\n\n"
+                        )
+
+                    memory_context += (
+                        "Use these successful patterns to inform your planning decision.\n\n"
+                    )
+
+            except Exception as e:
+                print(f"Warning: Failed to retrieve memory context: {e}")
+                # Continue without memory context if retrieval fails
+
+            # Step 2: Create planning prompt (original + memory context)
+            planning_prompt = get_supervisor_planning_prompt(instruction)
+            if memory_context:
+                planning_prompt = memory_context + planning_prompt
+
+            # Step 3: Get LLM Gateway
             llm_gateway = get_llm_gateway()
 
-            # Create planning prompt
-            planning_prompt = get_supervisor_planning_prompt(instruction)
-
-            # Call LLM for planning
+            # Step 4: Call LLM for planning with enhanced context
             response = await llm_gateway.chat(
                 workflow_id=task_input.workflow_id,
                 agent_id=self.AGENT_ID,

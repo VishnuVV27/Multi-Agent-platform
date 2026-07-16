@@ -84,6 +84,13 @@ class CostTracker:
             if m.workflow_id == workflow_id
         )
 
+    def get_workflow_tokens(self, workflow_id: str) -> int:
+        """Get total tokens used for a workflow."""
+        return sum(
+            m.total_tokens for m in self._usage_history
+            if m.workflow_id == workflow_id
+        )
+
     def get_agent_cost(self, agent_id: str) -> float:
         """Get total cost for an agent."""
         return sum(

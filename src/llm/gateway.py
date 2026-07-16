@@ -225,6 +225,33 @@ class LLMGateway:
         cost_tracker = get_cost_tracker()
         return cost_tracker.get_workflow_cost(workflow_id)
 
+    async def embed(
+        self,
+        text: str,
+        model: str = "text-embedding-3-small",
+    ) -> Dict[str, Any]:
+        """
+        Generate embeddings using LiteLLM.
+
+        Args:
+            text: Text to embed
+            model: Embedding model (default: Claude embeddings)
+
+        Returns:
+            {"data": [{"embedding": [...]}], "model": "..."}
+        """
+        try:
+            # Use Claude embeddings API via LiteLLM
+            response = await litellm.aembedding(
+                model="claude",
+                input=text,
+            )
+
+            return response
+
+        except Exception as e:
+            raise LLMException(f"Embedding request failed: {str(e)}")
+
 
 # Global gateway instance
 _llm_gateway = None
