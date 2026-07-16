@@ -7,6 +7,7 @@ from src.infrastructure.temporal_client import get_temporal_client
 from src.workflows.supervisor_workflow import SupervisorWorkflow, SupervisorWorkflowInput
 from src.workflows.orchestrator_workflow import OrchestratorWorkflow, OrchestratorWorkflowInput
 from src.config import settings
+from src.llm.gateway import get_llm_gateway
 
 router = APIRouter(prefix="/api/workflows", tags=["Workflows"])
 
@@ -136,4 +137,40 @@ async def list_workflows() -> Dict[str, Any]:
     return {
         "message": "Workflow listing not yet implemented",
         "note": "This will query from PostgreSQL once workflow storage is added",
+    }
+
+
+@router.get("/costs/summary", tags=["Costs"])
+async def get_cost_summary() -> Dict[str, Any]:
+    """
+    Get overall cost summary for all workflows.
+
+    Returns:
+        Cost statistics including total cost, token usage, request count
+    """
+    llm_gateway = get_llm_gateway()
+    summary = llm_gateway.get_cost_summary()
+    return {
+        "summary": summary,
+        "message": "Cost tracking enabled via LLM Gateway",
+    }
+
+
+@router.get("/{workflow_id}/cost", tags=["Costs"])
+async def get_workflow_cost(workflow_id: str) -> Dict[str, Any]:
+    """
+    Get cost for a specific workflow.
+
+    Args:
+        workflow_id: Workflow ID
+
+    Returns:
+        Total cost for the workflow
+    """
+    llm_gateway = get_llm_gateway()
+    cost = llm_gateway.get_workflow_cost(workflow_id)
+    return {
+        "workflow_id": workflow_id,
+        "total_cost": round(cost, 6),
+        "currency": "USD",
     }

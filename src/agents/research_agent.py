@@ -9,6 +9,7 @@ from src.agents.base import (
     register_agent,
 )
 from src.tools.gateway import get_tool_gateway
+from src.llm.gateway import get_llm_gateway
 
 
 @register_agent
@@ -73,8 +74,25 @@ class ResearchAgent(BaseAgent):
             # Step 3: Process and aggregate results
             findings = self._process_search_results(search_result.get("results", []))
 
-            # Step 4: Generate summary
-            summary = self._generate_summary(search_query, findings)
+            # Step 4: Generate summary using LLM
+            llm_gateway = get_llm_gateway()
+            summary_prompt = f"""
+Based on these search results about "{search_query}":
+
+{chr(10).join([f"- {f['title']}: {f['snippet']}" for f in findings[:3]])}
+
+Please provide a concise summary (2-3 sentences) of the key findings.
+"""
+            llm_response = await llm_gateway.generate(
+                workflow_id=task_input.workflow_id,
+                agent_id=self.AGENT_ID,
+                prompt=summary_prompt,
+                task_type="fast",
+                max_tokens=200,
+            )
+            summary = llm_response.get("text", "")
+            llm_cost = llm_response.get("cost", 0)
+            llm_tokens = llm_response.get("tokens", {})
 
             return TaskOutput(
                 task_id=task_input.task_id,
@@ -85,6 +103,11 @@ class ResearchAgent(BaseAgent):
                     "findings": findings,
                     "summary": summary,
                     "result_count": len(findings),
+                },
+                tokens_used=llm_tokens,
+                metadata={
+                    "llm_cost": llm_cost,
+                    "model": llm_response.get("model"),
                 },
             )
 
@@ -133,24 +156,3 @@ class ResearchAgent(BaseAgent):
             })
         return processed
 
-    def _generate_summary(self, query: str, findings: List[Dict[str, Any]]) -> str:
-        """
-        Generate a summary of findings.
-
-        For MVP: Simple concatenation.
-        Later: Use LLM to generate coherent summary.
-        """
-        if not findings:
-            return f"No findings found for: {query}"
-
-        summary_parts = [
-            f"Research Summary for '{query}':",
-            f"Found {len(findings)} results:",
-        ]
-
-        for finding in findings:
-            summary_parts.append(
-                f"  {finding['position']}. {finding['title']} - {finding['snippet'][:100]}..."
-            )
-
-        return "\n".join(summary_parts)
