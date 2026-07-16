@@ -1,0 +1,65 @@
+# Rate Limiting & Budget Control Policies
+
+# User tier-based limits
+users:
+  free:
+    requests_per_minute: 20
+    requests_per_hour: 500
+    monthly_budget: 10.0  # USD
+    max_tokens_per_day: 100000
+    max_workflows_per_day: 50
+
+  pro:
+    requests_per_minute: 100
+    requests_per_hour: 2000
+    monthly_budget: 100.0  # USD
+    max_tokens_per_day: 1000000
+    max_workflows_per_day: 500
+
+  enterprise:
+    requests_per_minute: 500
+    requests_per_hour: 10000
+    monthly_budget: null  # Unlimited
+    max_tokens_per_day: null  # Unlimited
+    max_workflows_per_day: null  # Unlimited
+
+# Agent-specific limits
+agents:
+  supervisor_agent:
+    max_tokens_per_workflow: 5000
+    max_cost_per_call: 0.10
+
+  research_agent:
+    max_tokens_per_workflow: 50000
+    max_cost_per_call: 1.00
+
+  analysis_agent:
+    max_tokens_per_workflow: 30000
+    max_cost_per_call: 0.50
+
+  writer_agent:
+    max_tokens_per_workflow: 40000
+    max_cost_per_call: 0.75
+
+# Provider API quotas
+provider_quotas:
+  openai:
+    requests_per_minute: 3500
+    tokens_per_minute: 80000
+    requests_per_day: 100000
+
+  anthropic:
+    requests_per_minute: 5000
+    tokens_per_minute: 100000
+    requests_per_day: 150000
+
+# Workflow limits
+workflows:
+  max_cost: 5.00  # USD per workflow
+  max_duration_minutes: 30
+  max_retries: 3
+
+# Alert thresholds
+alerts:
+  budget_warning_threshold: 0.80  # Alert at 80% of budget
+  rate_limit_warning_threshold: 0.75  # Alert at 75% of rate limit
