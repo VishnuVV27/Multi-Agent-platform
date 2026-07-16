@@ -59,13 +59,19 @@ User Prompt → Supervisor (plans) → Orchestrator (executes) → Research Agen
 
 ## Work In Progress
 
-### 🔄 Phase 2: Production Features (Step 6) - NEXT
+### 🔄 Phase 2: Production Features (Step 7) - NEXT
 
-**Step 6: Enhanced Tool Gateway** (Ready) - NEXT PRIORITY
-- [ ] More tools (document reader, database query, code executor, etc.)
-- [ ] Advanced permission enforcement (role-based)
-- [ ] Input sanitization for security
-- [ ] Tool execution metrics
+**Step 7: Human-in-the-Loop Approval Workflow** (Ready) - NEXT PRIORITY
+- [ ] Approval request model
+- [ ] FastAPI approval endpoints
+- [ ] Temporal signals for approval workflow
+- [ ] UI component for approval cards
+
+**Step 6: Enhanced Tool Gateway** ✅ COMPLETE
+- [x] Multiple tools (Document Reader, Database Query, Code Executor)
+- [x] Role-Based Access Control (RBAC)
+- [x] Input validation and sanitization
+- [x] Tool execution metrics
 
 ---
 
@@ -128,8 +134,15 @@ User Prompt → Supervisor (plans) → Orchestrator (executes) → Research Agen
 | **Research Agent** | ✅ Complete | src/agents/research_agent.py |
 | **Tool Gateway** | ✅ Complete | src/tools/gateway.py |
 | **Web Search Tool** | ✅ Complete | src/tools/web_search.py |
+| **Document Reader Tool** | ✅ Complete | src/tools/document_reader.py |
+| **Database Query Tool** | ✅ Complete | src/tools/database_query.py |
+| **Code Executor Tool** | ✅ Complete | src/tools/code_executor.py |
+| **RBAC (Role-Based Access Control)** | ✅ Complete | src/tools/gateway.py |
+| **Tool Metrics** | ✅ Complete | src/tools/gateway.py |
+| **Tool Routes API** | ✅ Complete | src/routes/tools.py |
 | **Workflow Routes** | ✅ Complete | src/routes/workflows.py |
 | **Temporal Worker** | ✅ Complete | src/workers/temporal_worker.py |
+| **LLM Gateway (LiteLLM)** | ✅ Complete | src/llm/gateway.py |
 | **Kafka Integration** | ⏳ Partial | src/infrastructure/kafka_client.py (basic) |
 | **Database Layer** | ⏳ Partial | Postgres connected, ORM models to expand |
 | **Redis Caching** | ✅ Complete | src/infrastructure/redis_client.py |
@@ -140,9 +153,9 @@ User Prompt → Supervisor (plans) → Orchestrator (executes) → Research Agen
 |---|---|---|
 | Analysis Agent | 8 | Medium |
 | Writer Agent | 8 | Medium |
-| LLM Gateway (LiteLLM) | 5 | High |
 | Approval Service | 7 | High |
 | Langfuse Observability | 10 | Medium |
+| RAG/Memory (inserted) | 9.5 | Medium |
 | Rate Limiting | 11 | Medium |
 | Authentication | 11 | Medium |
 | Prompt Management | 11 | Medium |
