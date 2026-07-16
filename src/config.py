@@ -63,10 +63,10 @@ class Settings(BaseSettings):
     LITELLM_LOG: bool = os.getenv("LITELLM_LOG", "TRUE").lower() == "true"
     LITELLM_CACHE: bool = os.getenv("LITELLM_CACHE", "false").lower() == "true"
 
-    # Observability
-    LANGFUSE_API_KEY: Optional[str] = os.getenv("LANGFUSE_API_KEY")
+    # Observability - Langfuse
+    LANGFUSE_PUBLIC_KEY: Optional[str] = os.getenv("LANGFUSE_PUBLIC_KEY")
     LANGFUSE_SECRET_KEY: Optional[str] = os.getenv("LANGFUSE_SECRET_KEY")
-    LANGFUSE_HOST: str = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    LANGFUSE_HOST: str = os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
 
     # Feature Flags
     ENABLE_APPROVAL_WORKFLOW: bool = os.getenv("ENABLE_APPROVAL_WORKFLOW", "true").lower() == "true"
