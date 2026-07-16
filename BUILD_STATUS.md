@@ -2,7 +2,7 @@
 
 ## Completed Phases
 
-### ✅ Phase 1: Foundation (Steps 1-4)
+### ✅ Phase 1-2: Foundation + LLM (Steps 1-5)
 
 **Step 1: Infrastructure Scaffold** ✅
 - [x] Docker Compose with 5 services (Postgres, Redis, Kafka, Temporal, Zookeeper)
@@ -39,7 +39,18 @@
 - [x] Capability-based agent discovery
 - [x] Pytest fixtures and conftest
 
-**Result: End-to-end workflow is functional with formally validated contracts!**
+**Step 5: LiteLLM Integration** ✅
+- [x] Model configuration (GPT-4, Claude, etc.)
+- [x] Multi-provider support (OpenAI, Anthropic)
+- [x] Model routing by task type and capability
+- [x] Fallback chain handling
+- [x] Cost tracker (accurate cost calculation)
+- [x] LLM Gateway (async generate/chat)
+- [x] Research Agent with real LLM calls
+- [x] Cost API endpoints
+- [x] Comprehensive tests (unit + integration)
+
+**Result: End-to-end workflow functional with real LLM calls and cost tracking!**
 ```
 User Prompt → Supervisor (plans) → Orchestrator (executes) → Research Agent → Results
 ```
@@ -48,16 +59,9 @@ User Prompt → Supervisor (plans) → Orchestrator (executes) → Research Agen
 
 ## Work In Progress
 
-### 🔄 Phase 2: Production Features (Steps 5-6) - NEXT
+### 🔄 Phase 2: Production Features (Step 6) - NEXT
 
-**Step 5: LiteLLM Integration** (Ready) - NEXT PRIORITY
-- [ ] Wrap LLM calls in LiteLLM gateway
-- [ ] Support multiple providers (OpenAI, Anthropic, etc.)
-- [ ] Model routing based on task requirements
-- [ ] Fallback handling
-- [ ] Cost tracking
-
-**Step 6: Enhanced Tool Gateway** (Ready)
+**Step 6: Enhanced Tool Gateway** (Ready) - NEXT PRIORITY
 - [ ] More tools (document reader, database query, code executor, etc.)
 - [ ] Advanced permission enforcement (role-based)
 - [ ] Input sanitization for security
