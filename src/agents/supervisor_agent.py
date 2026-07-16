@@ -49,17 +49,18 @@ class SupervisorAgent(BaseAgent):
         ("research", "search", "find", "gather", "collect"): ["research_agent"],
 
         # Keywords that trigger analysis
-        ("analyze", "compare", "evaluate"): ["analysis_agent"],
+        ("analyze", "compare", "evaluate", "metrics", "data"): ["analysis_agent"],
 
         # Keywords that trigger both research and analysis
-        ("research and analyze", "analyze competitors"): ["research_agent", "analysis_agent"],
+        ("research and analyze", "analyze competitors", "research competitors"): ["research_agent", "analysis_agent"],
 
         # Keywords that trigger writing
         ("write", "report", "document", "generate", "create"): ["writer_agent"],
 
-        # Combined workflows
+        # Combined workflows (most common patterns)
         ("research and write", "write about"): ["research_agent", "writer_agent"],
-        ("research analyze and write", "comprehensive report"): ["research_agent", "analysis_agent", "writer_agent"],
+        ("research analyze and write", "comprehensive report", "detailed report"): ["research_agent", "analysis_agent", "writer_agent"],
+        ("analyze and write", "report on"): ["analysis_agent", "writer_agent"],
     }
 
     async def execute(self, task_input: TaskInput) -> TaskOutput:
@@ -208,25 +209,21 @@ class SupervisorAgent(BaseAgent):
         Returns:
             Tailored instruction for this agent
         """
+        prev_note = (
+            f"(You will receive results from task {previous_task_id}). "
+            if previous_task_id
+            else ""
+        )
+
         # Map agent IDs to specific instructions
         if agent_id == "research_agent":
-            return f"Research the following: {instruction}"
+            return f"Research and gather information on: {instruction}"
 
         elif agent_id == "analysis_agent":
-            prev_note = (
-                f"(You will receive research results from {previous_task_id}). "
-                if previous_task_id
-                else ""
-            )
-            return f"Analyze and compare the research findings. {prev_note}Original request: {instruction}"
+            return f"Analyze the data/findings related to: {instruction}. {prev_note}Provide insights and patterns."
 
         elif agent_id == "writer_agent":
-            prev_note = (
-                f"(You will receive analysis/research from previous tasks). "
-                if previous_task_id
-                else ""
-            )
-            return f"Write a comprehensive report based on: {instruction}. {prev_note}Make it well-structured and professional."
+            return f"Write a professional report about: {instruction}. {prev_note}Make it well-structured, clear, and actionable."
 
         else:
             return instruction

@@ -7,6 +7,7 @@ from src.agents.base import TaskOutput
 from src.workflows.research_workflow import ResearchWorkflow, ResearchWorkflowInput
 from src.infrastructure.kafka_client import publish_event
 from src.config import settings
+import importlib
 
 
 @dataclass
@@ -152,8 +153,7 @@ class OrchestratorWorkflow:
         """
         Execute the appropriate agent workflow based on agent_id.
 
-        For MVP: Only Research Agent.
-        Later: Will dispatch to Analysis, Writer, etc.
+        Supports: research_agent, analysis_agent, writer_agent
         """
         if agent_id == "research_agent":
             return await workflow.execute_child_workflow(
@@ -164,5 +164,30 @@ class OrchestratorWorkflow:
                     instruction=instruction,
                 )
             )
+
+        elif agent_id == "analysis_agent":
+            # Import analysis workflow dynamically
+            from src.workflows.analysis_workflow import AnalysisWorkflow, AnalysisWorkflowInput
+            return await workflow.execute_child_workflow(
+                AnalysisWorkflow.execute,
+                AnalysisWorkflowInput(
+                    task_id=task_id,
+                    workflow_id=workflow_id,
+                    instruction=instruction,
+                )
+            )
+
+        elif agent_id == "writer_agent":
+            # Import writer workflow dynamically
+            from src.workflows.writer_workflow import WriterWorkflow, WriterWorkflowInput
+            return await workflow.execute_child_workflow(
+                WriterWorkflow.execute,
+                WriterWorkflowInput(
+                    task_id=task_id,
+                    workflow_id=workflow_id,
+                    instruction=instruction,
+                )
+            )
+
         else:
             raise Exception(f"Unknown agent: {agent_id}")
