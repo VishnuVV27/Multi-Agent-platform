@@ -7,6 +7,7 @@ A production-grade, orchestration-first multi-agent AI platform. A Supervisor ag
 ![Temporal](https://img.shields.io/badge/orchestration-Temporal-000000)
 ![Next.js](https://img.shields.io/badge/dashboard-Next.js%2014-black)
 ![Status](https://img.shields.io/badge/status-active%20development-yellow)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
