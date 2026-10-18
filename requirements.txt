@@ -18,6 +18,7 @@ openai==2.46.0
 
 # Data layer
 SQLAlchemy==2.0.51
+greenlet==3.5.3
 psycopg[binary]==3.3.4
 pgvector==0.5.0
 redis==8.0.1
@@ -31,3 +32,8 @@ langfuse==4.14.0
 # Tools
 ddgs==9.14.4
 httpx==0.28.1
+
+# Testing
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
