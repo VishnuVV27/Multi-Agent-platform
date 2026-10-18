@@ -15,14 +15,16 @@ interface GlassCardProps {
   tone?: GlassTone
   hover?: boolean
   className?: string
+  /** Set false when the card contains dropdowns/popovers that must escape its bounds */
+  clip?: boolean
   children: ReactNode
 }
 
-export default function GlassCard({ tone = 'slate', hover = false, className = '', children }: GlassCardProps) {
+export default function GlassCard({ tone = 'slate', hover = false, className = '', clip = true, children }: GlassCardProps) {
   return (
     <div
       className={`
-        relative overflow-hidden rounded-2xl backdrop-blur-xl
+        relative ${clip ? 'overflow-hidden' : ''} rounded-2xl backdrop-blur-xl
         bg-gradient-to-br border ${TONE_CLASSES[tone]}
         ${hover ? 'transition-all duration-300 hover:shadow-lg hover:shadow-white/5' : ''}
         ${className}

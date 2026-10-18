@@ -24,8 +24,8 @@ async def init_redis():
         raise
 
 
-def get_redis() -> Redis:
-    """Get Redis client instance."""
+def get_redis_client() -> Redis:
+    """Get Redis client instance (synchronous redis-py client)."""
     if redis_client is None:
         raise RuntimeError("Redis not initialized. Call init_redis() first.")
     return redis_client
@@ -33,23 +33,23 @@ def get_redis() -> Redis:
 
 async def cache_get(key: str) -> Optional[Any]:
     """Get value from cache."""
-    client = get_redis()
+    client = get_redis_client()
     return client.get(key)
 
 
 async def cache_set(key: str, value: Any, ttl: int = 3600) -> bool:
     """Set value in cache with optional TTL."""
-    client = get_redis()
+    client = get_redis_client()
     return client.setex(key, ttl, value)
 
 
 async def cache_delete(key: str) -> bool:
     """Delete value from cache."""
-    client = get_redis()
+    client = get_redis_client()
     return bool(client.delete(key))
 
 
 async def cache_exists(key: str) -> bool:
     """Check if key exists in cache."""
-    client = get_redis()
+    client = get_redis_client()
     return bool(client.exists(key))

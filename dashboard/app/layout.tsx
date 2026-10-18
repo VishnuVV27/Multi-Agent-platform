@@ -3,8 +3,8 @@ import './globals.css'
 import AnimatedBackground from '@/components/AnimatedBackground'
 
 export const metadata: Metadata = {
-  title: 'Multi-Agent AI Platform - Dashboard',
-  description: 'Monitor and manage AI workflows',
+  title: 'SupervisorFlow — Multi-Agent AI Orchestration',
+  description: 'One prompt, a team of AI agents: LLM-planned DAGs, Temporal orchestration, human approvals, RAG memory, and full cost observability',
 }
 
 export default function RootLayout({
@@ -19,10 +19,15 @@ export default function RootLayout({
 
         <nav className="sticky top-0 z-20 backdrop-blur-xl bg-slate-950/70 border-b border-white/10">
           <div className="max-w-7xl mx-auto flex items-center justify-between px-4 py-4">
-            <h1 className="text-xl font-semibold tracking-tight">🤖 Multi-Agent Platform</h1>
+            <a href="/" className="text-xl font-semibold tracking-tight hover:text-blue-300 transition-colors">
+              🤖 SupervisorFlow
+            </a>
             <div className="flex items-center gap-2 text-sm">
-              <a href="/" className="px-3 py-1.5 rounded-lg text-slate-300 hover:text-blue-300 hover:bg-blue-500/10 transition-colors">
+              <a href="/workflows" className="px-3 py-1.5 rounded-lg text-slate-300 hover:text-blue-300 hover:bg-blue-500/10 transition-colors">
                 Workflows
+              </a>
+              <a href="/memory" className="px-3 py-1.5 rounded-lg text-slate-300 hover:text-blue-300 hover:bg-blue-500/10 transition-colors">
+                Memory
               </a>
               <a href="/metrics" className="px-3 py-1.5 rounded-lg text-slate-300 hover:text-blue-300 hover:bg-blue-500/10 transition-colors">
                 Metrics

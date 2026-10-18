@@ -3,7 +3,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 import uuid
 
-from src.infrastructure.database import Base
+from src.models.base import Base
 
 
 class AuditLog(Base):

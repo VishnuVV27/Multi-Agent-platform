@@ -23,6 +23,7 @@ class AgentCapability(str, Enum):
     DATA_ANALYSIS = "data_analysis"
     WRITING = "writing"
     PLANNING = "planning"
+    EVALUATION = "evaluation"
 
 
 class TaskInput(BaseModel):
@@ -55,7 +56,12 @@ class AgentEvent(BaseModel):
     agent_id: str
     task_id: str
     status: AgentStatus
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    # Wrapped in a lambda (not passed as `datetime.utcnow` directly): Temporal's
+    # workflow sandbox proxies the datetime module, and Pydantic's schema
+    # generation introspects default_factory via inspect.signature(), which
+    # trips the sandbox's restricted-attribute-access check on the bound
+    # method itself. A plain lambda has no such restriction.
+    timestamp: datetime = Field(default_factory=lambda: datetime.utcnow())
     data: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -77,6 +83,34 @@ class BaseAgent(ABC):
     CAPABILITIES: List[AgentCapability] = []
     ALLOWED_TOOLS: List[str] = []
     VERSION: str = "1.0.0"
+
+    @staticmethod
+    def skill_addendum(task_input: "TaskInput") -> str:
+        """
+        Instruction block from user-enabled skills targeting this agent.
+
+        The orchestrator injects `skill_instructions` into the task context
+        when the user enabled skills (skillsllm-style instruction modules);
+        agents append this to their main prompt. Empty string when none.
+        """
+        instructions = (task_input.context or {}).get("skill_instructions")
+        if not instructions:
+            return ""
+        return f"\n\nACTIVE SKILLS — follow these behavior modules:\n{instructions}"
+
+    @staticmethod
+    def capped_max_tokens(task_input: "TaskInput", default: int) -> int:
+        """
+        Apply the user's optional per-workflow output token limit.
+
+        The orchestrator injects `max_output_tokens` into every task's
+        context when the user enables the limiter — each LLM call uses the
+        smaller of the agent's own default and the user's cap.
+        """
+        limit = (task_input.context or {}).get("max_output_tokens")
+        if isinstance(limit, int) and limit > 0:
+            return min(default, limit)
+        return default
 
     def __init__(self):
         """Initialize agent with dependency injection."""

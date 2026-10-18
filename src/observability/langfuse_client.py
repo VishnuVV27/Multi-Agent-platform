@@ -96,39 +96,36 @@ class LangfuseClient:
             return None
 
         try:
-            trace_id = f"{workflow_id}-{agent_id}-{int(time.time() * 1000)}"
+            # Langfuse SDK v3+ is OTel-based: the v2 client.trace()/generation()
+            # methods no longer exist. Create a generation observation and set
+            # trace-level attributes through it instead.
+            total_tokens = input_tokens + output_tokens
+            input_share = (input_tokens / total_tokens) if total_tokens else 0.0
 
-            self.client.trace(
-                id=trace_id,
+            generation = self.client.start_observation(
                 name=f"{agent_id}:llm_call",
+                as_type="generation",
+                model=model,
+                input=[{"role": "user", "content": prompt}],
                 metadata={
                     "workflow_id": workflow_id,
                     "agent_id": agent_id,
-                    "model": model,
                     "prompt_version": prompt_version,
+                    "latency_ms": latency_ms,
                     **(metadata or {}),
                 },
             )
-
-            # Log the LLM generation
-            self.client.generation(
-                trace_id=trace_id,
-                name=f"llm_generation:{model}",
-                input=[{"role": "user", "content": prompt}],
-                output={"text": output},
-                model=model,
-                usage={
-                    "input": input_tokens,
-                    "output": output_tokens,
+            generation.update(
+                output=output,
+                usage_details={"input": input_tokens, "output": output_tokens},
+                cost_details={
+                    "input": cost * input_share,
+                    "output": cost * (1 - input_share),
                 },
-                cost={
-                    "input": cost * (input_tokens / (input_tokens + output_tokens)),
-                    "output": cost * (output_tokens / (input_tokens + output_tokens)),
-                },
-                end_time=datetime.utcnow(),
-                duration_ms=latency_ms,
             )
+            generation.end()
 
+            trace_id = generation.trace_id
             logger.debug(f"Traced LLM call: {trace_id}")
             return trace_id
 
@@ -167,11 +164,12 @@ class LangfuseClient:
             return None
 
         try:
-            self.client.trace(
-                id=workflow_id,
+            span = self.client.start_observation(
                 name="workflow:execution",
+                as_type="span",
+                input={"user_request": user_request},
                 metadata={
-                    "user_request": user_request,
+                    "workflow_id": workflow_id,
                     "agents": agents,
                     "agent_count": len(agents),
                     "success": success,
@@ -181,9 +179,10 @@ class LangfuseClient:
                     **(metadata or {}),
                 },
             )
+            span.end()
 
             logger.debug(f"Traced workflow: {workflow_id}")
-            return workflow_id
+            return span.trace_id
 
         except Exception as e:
             logger.error(f"Failed to trace workflow: {e}")
@@ -218,23 +217,23 @@ class LangfuseClient:
             return None
 
         try:
-            trace_id = f"{workflow_id}-{agent_id}"
-
-            self.client.span(
-                trace_id=workflow_id,
+            span = self.client.start_observation(
                 name=f"agent:{agent_id}",
+                as_type="span",
                 input={"task": task_input},
-                output={"result": task_output},
                 metadata={
+                    "workflow_id": workflow_id,
                     "agent_id": agent_id,
                     "success": success,
                     "duration_ms": duration_ms,
                     **(metadata or {}),
                 },
             )
+            span.update(output={"result": task_output})
+            span.end()
 
-            logger.debug(f"Traced agent execution: {trace_id}")
-            return trace_id
+            logger.debug(f"Traced agent execution: {span.trace_id}")
+            return span.trace_id
 
         except Exception as e:
             logger.error(f"Failed to trace agent execution: {e}")

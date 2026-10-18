@@ -2,13 +2,17 @@
 Database Query Tool: Execute SQL queries safely.
 
 Features:
-- Query builder (prevent SQL injection)
+- SELECT-only whitelist with word-boundary keyword checks
 - Result limiting (prevent huge result sets)
-- Timeout handling
+- Statement timeout enforcement
+- Runs against the platform's own Postgres (read-only view of
+  workflows, agent_runs, approvals, memories, audit logs)
 """
 
 from typing import Dict, Any, List, Optional
+import asyncio
 import re
+import time
 
 
 class DatabaseQueryTool:
@@ -16,7 +20,10 @@ class DatabaseQueryTool:
 
     TOOL_ID = "database_query"
     TOOL_NAME = "Database Query"
-    DESCRIPTION = "Execute SQL queries (SELECT only, max 1000 rows)"
+    DESCRIPTION = (
+        "Query the platform database (SELECT only, max 1000 rows). "
+        "Tables: workflows, agent_runs, approval_requests, workflow_memories, audit_logs"
+    )
     RISK_LEVEL = "high"  # High risk: can access sensitive data
     CATEGORY = "information"
 
@@ -36,7 +43,7 @@ class DatabaseQueryTool:
 
         Args:
             query: SQL query (SELECT only)
-            database: Database to query
+            database: Database to query (only "default" supported)
             max_rows: Limit results (default 1000)
 
         Returns:
@@ -52,37 +59,60 @@ class DatabaseQueryTool:
             if not self._is_safe_query(query):
                 return {
                     "success": False,
-                    "error": "Only SELECT queries are allowed",
+                    "error": "Only SELECT queries are allowed (no comments, no mutations)",
                 }
 
             max_rows = min(max_rows or self.MAX_ROWS, self.MAX_ROWS)
 
-            # For MVP: Return mock data
-            # Later: Connect to actual database
-            mock_rows = [
-                {"id": 1, "name": "Sample Row 1", "value": 100},
-                {"id": 2, "name": "Sample Row 2", "value": 200},
-            ]
+            start = time.time()
+            rows = await asyncio.to_thread(self._execute_sync, query, max_rows)
+            execution_time_ms = (time.time() - start) * 1000
 
             return {
                 "success": True,
                 "database": database,
                 "query": query,
-                "rows": mock_rows[:max_rows],
-                "row_count": len(mock_rows),
-                "execution_time_ms": 45,
-                "note": "Using mock data for MVP. Replace with real database connection.",
+                "rows": rows,
+                "row_count": len(rows),
+                "execution_time_ms": round(execution_time_ms, 1),
             }
 
         except Exception as e:
             return {
                 "success": False,
+                "query": query,
                 "error": str(e),
             }
 
+    def _execute_sync(self, query: str, max_rows: int) -> List[Dict[str, Any]]:
+        """Run the query against Postgres with a statement timeout."""
+        from sqlalchemy import text
+        from src.infrastructure.database import get_db
+
+        db = get_db()
+        try:
+            db.execute(
+                text(f"SET LOCAL statement_timeout = {self.TIMEOUT_SECONDS * 1000}")
+            )
+            result = db.execute(text(query)).mappings()
+            rows = []
+            for i, row in enumerate(result):
+                if i >= max_rows:
+                    break
+                # Stringify non-JSON-serializable values (UUID, datetime, vectors)
+                rows.append(
+                    {
+                        k: (v if isinstance(v, (str, int, float, bool, type(None))) else str(v)[:200])
+                        for k, v in dict(row).items()
+                    }
+                )
+            return rows
+        finally:
+            db.close()
+
     def _is_safe_query(self, query: str) -> bool:
         """
-        Validate query is safe (SELECT only, no comments).
+        Validate query is safe (SELECT only, no comments, no stacked statements).
 
         Args:
             query: SQL query to validate
@@ -90,21 +120,24 @@ class DatabaseQueryTool:
         Returns:
             True if safe, False otherwise
         """
-        # Remove whitespace and convert to uppercase
         clean_query = query.strip().upper()
 
-        # Check for dangerous keywords
-        dangerous = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "TRUNCATE"]
+        # Word-boundary check for mutating keywords (substring check would
+        # false-positive on column names like "updated_at")
+        dangerous = [
+            "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "TRUNCATE",
+            "GRANT", "REVOKE", "CREATE", "COPY", "EXECUTE",
+        ]
         for keyword in dangerous:
-            if keyword in clean_query:
+            if re.search(rf"\b{keyword}\b", clean_query):
                 return False
 
-        # Check for comments
-        if "--" in query or "/*" in query:
+        # No comments or stacked statements
+        if "--" in query or "/*" in query or ";" in query.rstrip().rstrip(";"):
             return False
 
-        # Must start with SELECT
-        if not clean_query.startswith("SELECT"):
+        # Must start with SELECT (or WITH ... SELECT)
+        if not (clean_query.startswith("SELECT") or clean_query.startswith("WITH")):
             return False
 
         return True

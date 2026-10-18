@@ -10,15 +10,44 @@ Endpoints:
 """
 
 from fastapi import APIRouter, HTTPException
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from src.approval.service import get_approval_service
 from src.approval.models import (
     CreateApprovalRequest, ApproveRequest, RejectRequest,
     ApprovalResponse, ApprovalStatusResponse
 )
+from src.infrastructure.temporal_client import get_temporal_client
 
 router = APIRouter(prefix="/api/approvals", tags=["Approvals"])
+
+
+async def _signal_orchestrator(
+    workflow_id: Optional[str],
+    approved: bool,
+    decided_by: str,
+    reason: Optional[str] = None,
+) -> bool:
+    """
+    Signal the paused OrchestratorWorkflow with the human decision so it
+    resumes (approved) or terminates cleanly (rejected).
+
+    Standalone approval requests may not have a live workflow behind them —
+    a failed signal is logged, not raised, so the DB decision still lands.
+    """
+    if not workflow_id:
+        return False
+    try:
+        client = get_temporal_client()
+        handle = client.get_workflow_handle(f"orchestrator-{workflow_id}")
+        await handle.signal(
+            "approval_signal",
+            {"approved": approved, "approved_by": decided_by, "reason": reason},
+        )
+        return True
+    except Exception as e:
+        print(f"Could not signal workflow orchestrator-{workflow_id}: {e}")
+        return False
 
 
 @router.post("/", response_model=ApprovalResponse)
@@ -105,15 +134,16 @@ async def approve_request(approval_id: str, request: ApproveRequest) -> Dict[str
             comments=request.comments,
         )
 
-        # TODO: Signal Temporal workflow to resume
-        # await temporal_client.get_workflow_handle(approval["workflow_id"]).signal(
-        #     "approval_signal",
-        #     {"approval_id": approval_id, "approved": True}
-        # )
+        signaled = await _signal_orchestrator(
+            workflow_id=approval.get("workflow_id"),
+            approved=True,
+            decided_by=request.approved_by,
+        )
 
         return {
             "approval_id": approval_id,
             "status": "approved",
+            "workflow_resumed": signaled,
             "message": f"Approved by {request.approved_by}",
         }
     except ValueError as e:
@@ -144,16 +174,18 @@ async def reject_request(approval_id: str, request: RejectRequest) -> Dict[str, 
             reason=request.reason,
         )
 
-        # TODO: Signal Temporal workflow to cancel task
-        # await temporal_client.get_workflow_handle(approval["workflow_id"]).signal(
-        #     "approval_signal",
-        #     {"approval_id": approval_id, "approved": False, "reason": request.reason}
-        # )
+        signaled = await _signal_orchestrator(
+            workflow_id=approval.get("workflow_id"),
+            approved=False,
+            decided_by=request.rejected_by,
+            reason=request.reason,
+        )
 
         return {
             "approval_id": approval_id,
             "status": "rejected",
             "reason": request.reason,
+            "workflow_notified": signaled,
             "message": f"Rejected by {request.rejected_by}",
         }
     except ValueError as e:

@@ -67,6 +67,18 @@ logs/
 .cache/
 *.tmp
 
+# Document reader tool sandbox
+workspace/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Node / Next.js (dashboard)
+node_modules/
+.next/
+out/
+dashboard/.env*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

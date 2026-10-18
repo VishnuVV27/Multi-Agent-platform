@@ -100,9 +100,56 @@ class EvaluationService:
             logger.error(f"Failed to get agent success rate: {e}")
             return {}
 
+    def get_overall_success_rate(self, days: int = 7) -> Dict[str, Any]:
+        """Get platform-wide success rate across all agents."""
+        try:
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+
+            total = self.db.query(AgentRun).filter(AgentRun.created_at >= cutoff_date).count()
+            successful = self.db.query(AgentRun).filter(
+                AgentRun.created_at >= cutoff_date,
+                AgentRun.success.is_(True),
+            ).count()
+
+            return {
+                "total_runs": total,
+                "successful_runs": successful,
+                "success_rate": (successful / total) if total else 0.0,
+                "period_days": days,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get overall success rate: {e}")
+            return {"total_runs": 0, "successful_runs": 0, "success_rate": 0.0, "period_days": days}
+
+    def get_daily_cost_series(self, days: int = 7) -> List[Dict[str, Any]]:
+        """Get total cost grouped by day for the last N days."""
+        try:
+            from sqlalchemy import func
+
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            rows = (
+                self.db.query(
+                    func.date(AgentRun.created_at).label("day"),
+                    func.coalesce(func.sum(AgentRun.cost), 0.0).label("cost"),
+                )
+                .filter(AgentRun.created_at >= cutoff_date)
+                .group_by(func.date(AgentRun.created_at))
+                .order_by(func.date(AgentRun.created_at))
+                .all()
+            )
+            return [{"date": str(r.day), "cost": round(float(r.cost), 6)} for r in rows]
+        except Exception as e:
+            logger.error(f"Failed to get daily cost series: {e}")
+            return []
+
     def get_cost_metrics(self, days: int = 7) -> Dict[str, Any]:
         """
         Get cost metrics for the platform.
+
+        Reads from the agent_runs table (Postgres) rather than the in-memory
+        CostTracker singleton: agent execution happens inside the Temporal
+        worker process, while this API runs in a separate FastAPI process,
+        so an in-memory tracker here would always read as empty.
 
         Args:
             days: Look back this many days
@@ -111,18 +158,24 @@ class EvaluationService:
             Cost metrics
         """
         try:
-            from src.llm.cost_tracker import get_cost_tracker
+            since = datetime.utcnow() - timedelta(days=days)
+            runs = self.db.query(AgentRun).filter(AgentRun.created_at >= since).all()
 
-            cost_tracker = get_cost_tracker()
-            summary = cost_tracker.get_summary()
+            total_cost = sum(r.cost or 0.0 for r in runs)
+            total_tokens = sum(r.tokens_used or 0 for r in runs)
+            request_count = len(runs)
+
+            cost_by_agent: Dict[str, float] = {}
+            for r in runs:
+                cost_by_agent[r.agent_id] = cost_by_agent.get(r.agent_id, 0.0) + (r.cost or 0.0)
 
             return {
                 "period_days": days,
-                "total_cost": summary.get("total_cost", 0.0),
-                "total_tokens": summary.get("total_tokens", 0),
-                "request_count": summary.get("request_count", 0),
-                "avg_cost_per_request": summary.get("avg_cost_per_request", 0.0),
-                "cost_by_model": summary.get("cost_by_model", {}),
+                "total_cost": round(total_cost, 6),
+                "total_tokens": total_tokens,
+                "request_count": request_count,
+                "avg_cost_per_request": round(total_cost / request_count, 6) if request_count else 0.0,
+                "cost_by_agent": {k: round(v, 6) for k, v in cost_by_agent.items()},
             }
 
         except Exception as e:
@@ -221,3 +274,16 @@ class EvaluationService:
         except Exception as e:
             logger.error(f"Failed to get evaluation summary: {e}")
             return {}
+
+
+# Global evaluation service instance (lazy singleton — must not be
+# constructed at module import time, since it opens a DB session)
+_evaluation_service: Optional["EvaluationService"] = None
+
+
+def get_evaluation_service() -> "EvaluationService":
+    """Get the global evaluation service, creating it on first use."""
+    global _evaluation_service
+    if _evaluation_service is None:
+        _evaluation_service = EvaluationService()
+    return _evaluation_service

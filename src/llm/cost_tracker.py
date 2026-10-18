@@ -8,6 +8,7 @@ Tracks:
 - Cost per agent
 """
 
+from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from datetime import datetime
 from src.llm.models import get_model_config
@@ -165,6 +166,3 @@ def get_cost_tracker() -> CostTracker:
     if _cost_tracker is None:
         _cost_tracker = CostTracker()
     return _cost_tracker
-
-
-from dataclasses import dataclass

@@ -4,7 +4,7 @@ API endpoints for rate limiting and budget control.
 Monitor quotas, spending, and limits.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Path
 from typing import Optional
 
 from src.rate_limiting.rate_limiter import get_rate_limiter
@@ -12,10 +12,6 @@ from src.rate_limiting.budget_manager import get_budget_manager
 from src.rate_limiting.policy_engine import get_policy_engine
 
 router = APIRouter(prefix="/api/rate-limiting", tags=["rate-limiting"])
-
-rate_limiter = get_rate_limiter()
-budget_manager = get_budget_manager()
-policy_engine = get_policy_engine()
 
 
 @router.get("/check/{user_id}")
@@ -31,7 +27,7 @@ async def check_rate_limits(user_id: str):
     - Requests remaining per minute/hour
     """
     try:
-        remaining = rate_limiter.get_remaining_quota(user_id)
+        remaining = get_rate_limiter().get_remaining_quota(user_id)
         return {
             "user_id": user_id,
             "remaining": remaining,
@@ -44,7 +40,7 @@ async def check_rate_limits(user_id: str):
 @router.get("/budget/{user_id}")
 async def get_budget_status(
     user_id: str,
-    tier: str = Query("free", regex="^(free|pro|enterprise)$")
+    tier: str = Query("free", pattern="^(free|pro|enterprise)$")
 ):
     """
     Get budget status for a user.
@@ -62,7 +58,7 @@ async def get_budget_status(
     - Percentage used
     """
     try:
-        status = budget_manager.get_budget_status(user_id, tier)
+        status = get_budget_manager().get_budget_status(user_id, tier)
         if not status:
             raise HTTPException(status_code=404, detail="User not found")
         return status
@@ -84,7 +80,7 @@ async def reset_rate_limit(user_id: str):
     - Reset status
     """
     try:
-        success = rate_limiter.reset_limit(user_id)
+        success = get_rate_limiter().reset_limit(user_id)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to reset limit")
         return {
@@ -97,7 +93,7 @@ async def reset_rate_limit(user_id: str):
 
 
 @router.get("/policies/users/{tier}")
-async def get_user_policy(tier: str = Query("free", regex="^(free|pro|enterprise)$")):
+async def get_user_policy(tier: str = Path(pattern="^(free|pro|enterprise)$")):
     """
     Get rate limit policy for a user tier.
 
@@ -110,7 +106,7 @@ async def get_user_policy(tier: str = Query("free", regex="^(free|pro|enterprise
     - Token limits
     """
     try:
-        policy = policy_engine.get_user_policy(tier)
+        policy = get_policy_engine().get_user_policy(tier)
         return {
             "tier": tier,
             "policy": policy
@@ -131,7 +127,7 @@ async def get_agent_policy(agent_id: str):
     - Agent-specific limits
     """
     try:
-        policy = policy_engine.get_agent_policy(agent_id)
+        policy = get_policy_engine().get_agent_policy(agent_id)
         return {
             "agent_id": agent_id,
             "policy": policy
@@ -156,7 +152,7 @@ async def estimate_workflow_cost(
     - Estimated cost in USD
     """
     try:
-        cost = budget_manager.get_workflow_cost_estimate(model, estimated_tokens)
+        cost = get_budget_manager().get_workflow_cost_estimate(model, estimated_tokens)
         return {
             "model": model,
             "estimated_tokens": estimated_tokens,
@@ -178,6 +174,7 @@ async def get_rate_limit_summary():
     - Providers being monitored
     """
     try:
+        policy_engine = get_policy_engine()
         return {
             "status": "active",
             "users_configured": list(policy_engine.policies.get("users", {}).keys()),

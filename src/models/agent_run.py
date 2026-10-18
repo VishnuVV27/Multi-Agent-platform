@@ -8,9 +8,8 @@ from datetime import datetime
 import uuid
 from sqlalchemy import Column, String, Text, Float, Integer, Boolean, DateTime
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base
 
-Base = declarative_base()
+from src.models.base import Base
 
 
 class AgentRun(Base):
@@ -44,6 +43,10 @@ class AgentRun(Base):
     # Success tracking
     success = Column(Boolean, nullable=False, default=False)
     error_message = Column(Text, nullable=True)
+
+    # Which version of the agent's primary prompt produced this run
+    # (from the Prompt Registry) — ties output quality to prompt changes
+    prompt_version = Column(String(20), nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

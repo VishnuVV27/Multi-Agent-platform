@@ -1,119 +1,113 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import ApprovalCard from '@/components/ApprovalCard'
 import GlassCard from '@/components/GlassCard'
-import { AlertCircle, CheckCircle } from 'lucide-react'
+import { AlertCircle, CheckCircle, Activity } from 'lucide-react'
+import { apiFetch, ApiError, DEFAULT_USER_ID } from '@/lib/api'
+
+type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 
 interface ApprovalRequest {
   request_id: string
   agent_id: string
   agent_name: string
   action: string
-  risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+  risk_level: RiskLevel
   description: string
   details?: string[]
   approval_window_minutes?: number
   created_at: string
 }
 
+interface RawApproval {
+  id: string
+  workflow_id: string
+  agent_id: string
+  action: string
+  description: string | null
+  risk_level: string
+  context: Record<string, unknown> | null
+  created_at: string
+  expires_at: string | null
+}
+
+interface ApprovalListResponse {
+  total: number
+  pending: number
+  approved: number
+  rejected: number
+  requests: RawApproval[]
+}
+
+function toApprovalRequest(raw: RawApproval): ApprovalRequest {
+  const created = new Date(raw.created_at)
+  const expires = raw.expires_at ? new Date(raw.expires_at) : null
+  const windowMinutes = expires ? Math.max(1, Math.round((expires.getTime() - created.getTime()) / 60000)) : undefined
+
+  return {
+    request_id: raw.id,
+    agent_id: raw.agent_id,
+    agent_name: raw.agent_id.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join(' '),
+    action: raw.action.split('_').map(w => w[0].toUpperCase() + w.slice(1)).join(' '),
+    risk_level: raw.risk_level.toUpperCase() as RiskLevel,
+    description: raw.description ?? 'No additional description provided.',
+    details: raw.context ? Object.entries(raw.context).map(([k, v]) => `${k}: ${v}`) : undefined,
+    approval_window_minutes: windowMinutes,
+    created_at: raw.created_at,
+  }
+}
+
 export default function ApprovalsPage() {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
-  const [completed, setCompleted] = useState<string[]>([])
+  const [completedCount, setCompletedCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    setLoading(false)
-    // Mock data - in production, fetch from API with WebSocket
-    setApprovals([
-      {
-        request_id: 'apr_001',
-        agent_id: 'coding_agent',
-        agent_name: 'Coding Agent',
-        action: 'Deploy to Production',
-        risk_level: 'CRITICAL',
-        description: 'Deploy version 2.1.0 to production environment with 5 breaking API changes',
-        details: [
-          'New payment processing integration',
-          'Database schema migration',
-          'Customer notification emails',
-          'Requires database backup'
-        ],
-        approval_window_minutes: 120,
-        created_at: new Date().toISOString(),
-      },
-      {
-        request_id: 'apr_002',
-        agent_id: 'sql_agent',
-        agent_name: 'SQL Agent',
-        action: 'Execute Production Query',
-        risk_level: 'HIGH',
-        description: 'Run customer data migration affecting 10,000+ records in production',
-        details: [
-          'Update customer_status table',
-          'Backfill user_preferences',
-          'Cascade delete old records'
-        ],
-        approval_window_minutes: 60,
-        created_at: new Date(Date.now() - 180000).toISOString(),
-      },
-      {
-        request_id: 'apr_003',
-        agent_id: 'email_agent',
-        agent_name: 'Email Agent',
-        action: 'Send Customer Email Campaign',
-        risk_level: 'MEDIUM',
-        description: 'Send promotional email to 50,000 users',
-        details: [
-          'Recipient: Active users (segment: pro_tier)',
-          'Subject: Q3 Product Updates',
-          'Unsubscribe link: included'
-        ],
-        approval_window_minutes: 30,
-        created_at: new Date(Date.now() - 600000).toISOString(),
-      },
-      {
-        request_id: 'apr_004',
-        agent_id: 'research_agent',
-        agent_name: 'Research Agent',
-        action: 'Access Private Documents',
-        risk_level: 'MEDIUM',
-        description: 'Access confidential client files for competitive analysis',
-        details: [
-          'Files: Q3_financial_report.pdf',
-          'Reason: Market research for pricing strategy',
-          'Duration: 24 hours'
-        ],
-        approval_window_minutes: 30,
-        created_at: new Date(Date.now() - 120000).toISOString(),
-      },
-      {
-        request_id: 'apr_005',
-        agent_id: 'analytics_agent',
-        agent_name: 'Analytics Agent',
-        action: 'Export User Data',
-        risk_level: 'LOW',
-        description: 'Export anonymized user analytics for reporting',
-        details: [
-          'Data: Aggregated metrics only',
-          'Format: CSV',
-          'Retention: 30 days'
-        ],
-        approval_window_minutes: 15,
-        created_at: new Date(Date.now() - 30000).toISOString(),
-      },
-    ])
+  const load = useCallback(async () => {
+    try {
+      setError(null)
+      const data = await apiFetch<ApprovalListResponse>('/api/approvals/')
+      setApprovals(data.requests.map(toApprovalRequest))
+      setCompletedCount(data.approved + data.rejected)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not reach the API')
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  const handleApprove = (request_id: string) => {
-    setCompleted([...completed, request_id])
-    setApprovals(approvals.filter(a => a.request_id !== request_id))
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const handleApprove = async (request_id: string) => {
+    setApprovals(prev => prev.filter(a => a.request_id !== request_id))
+    setCompletedCount(c => c + 1)
+    try {
+      await apiFetch(`/api/approvals/${request_id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ approval_id: request_id, approved_by: DEFAULT_USER_ID }),
+      })
+    } catch {
+      load() // resync with server if the call failed
+    }
   }
 
-  const handleReject = (request_id: string) => {
-    setCompleted([...completed, request_id])
-    setApprovals(approvals.filter(a => a.request_id !== request_id))
+  const handleReject = async (request_id: string) => {
+    setApprovals(prev => prev.filter(a => a.request_id !== request_id))
+    setCompletedCount(c => c + 1)
+    try {
+      await apiFetch(`/api/approvals/${request_id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ approval_id: request_id, rejected_by: DEFAULT_USER_ID, reason: 'Rejected via dashboard' }),
+      })
+    } catch {
+      load()
+    }
   }
+
+  const criticalCount = approvals.filter(a => a.risk_level === 'CRITICAL').length
 
   return (
     <div className="space-y-8">
@@ -121,9 +115,15 @@ export default function ApprovalsPage() {
       <div className="space-y-2">
         <h1 className="text-4xl font-bold text-slate-100">Approvals Required</h1>
         <p className="text-slate-400">
-          {approvals.length} pending • {completed.length} completed today
+          {approvals.length} pending • {completedCount} completed
         </p>
       </div>
+
+      {error && (
+        <GlassCard tone="red" className="p-4 text-sm text-red-200">
+          Couldn't load approvals from the API: {error}
+        </GlassCard>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -131,9 +131,7 @@ export default function ApprovalsPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-red-300 font-medium">Critical</p>
-              <p className="text-2xl font-bold text-red-200">
-                {approvals.filter(a => a.risk_level === 'CRITICAL').length}
-              </p>
+              <p className="text-2xl font-bold text-red-200">{criticalCount}</p>
             </div>
             <AlertCircle className="w-8 h-8 text-red-400" />
           </div>
@@ -153,7 +151,7 @@ export default function ApprovalsPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-emerald-300 font-medium">Completed</p>
-              <p className="text-2xl font-bold text-emerald-200">{completed.length}</p>
+              <p className="text-2xl font-bold text-emerald-200">{completedCount}</p>
             </div>
             <CheckCircle className="w-8 h-8 text-emerald-400" />
           </div>
@@ -161,7 +159,12 @@ export default function ApprovalsPage() {
       </div>
 
       {/* Bento Grid of Approval Cards */}
-      {approvals.length > 0 ? (
+      {loading ? (
+        <div className="text-center py-16">
+          <Activity className="w-8 h-8 animate-spin mx-auto mb-4 text-blue-400" />
+          <p className="text-slate-400">Loading approvals...</p>
+        </div>
+      ) : approvals.length > 0 ? (
         <div className="bento-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))' }}>
           {approvals.map((approval) => (
             <ApprovalCard

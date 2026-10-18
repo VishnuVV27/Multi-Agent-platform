@@ -1,9 +1,10 @@
 from temporalio import workflow, activity
-from dataclasses import dataclass
+from temporalio.common import RetryPolicy
+from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Dict, Any, List
 
 from src.agents.base import TaskInput, TaskOutput
-from src.agents.supervisor_agent import SupervisorAgent
 
 
 @dataclass
@@ -11,7 +12,7 @@ class SupervisorWorkflowInput:
     """Input to the Supervisor workflow."""
     workflow_id: str
     user_prompt: str
-    context: Dict[str, Any] = None
+    context: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -20,6 +21,7 @@ class SupervisorWorkflowOutput:
     workflow_id: str
     tasks: List[Dict[str, Any]]
     planning_method: str
+    agents_selected: List[str] = field(default_factory=list)
 
 
 # Activity: Execute Supervisor Agent
@@ -31,6 +33,11 @@ async def run_supervisor_activity(input_data: SupervisorWorkflowInput) -> Superv
     Temporal separates workflows (deterministic, retry-able logic) from activities (non-deterministic, external calls).
     Running the agent here as an activity ensures Temporal can retry it if needed.
     """
+    # Imported locally: SupervisorAgent pulls in litellm -> httpx -> urllib,
+    # which Temporal's workflow sandbox restricts if imported at module level
+    # in a file that also defines a @workflow.defn class.
+    from src.agents.supervisor_agent import SupervisorAgent
+
     supervisor = SupervisorAgent()
 
     # Create task input for Supervisor
@@ -54,6 +61,7 @@ async def run_supervisor_activity(input_data: SupervisorWorkflowInput) -> Superv
         workflow_id=input_data.workflow_id,
         tasks=tasks,
         planning_method=task_output.result.get("planning_method", "unknown"),
+        agents_selected=task_output.result.get("agents_selected", []),
     )
 
 
@@ -87,7 +95,8 @@ class SupervisorWorkflow:
         output = await workflow.execute_activity(
             run_supervisor_activity,
             input_data,
-            start_to_close_timeout=300,  # 5 minute timeout
+            start_to_close_timeout=timedelta(seconds=300),  # 5 minute timeout
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
 
         return output

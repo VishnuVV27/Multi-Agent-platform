@@ -1,15 +1,19 @@
 from sqlalchemy import create_engine, Engine, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 from src.config import settings
 
-# Import ORM models so they register with Base
-from src.models.memory import WorkflowMemoryORM
+# Shared declarative base for all ORM models
+from src.models.base import Base
 
-# Declarative base for all ORM models
-Base = declarative_base()
+# Import ORM models so they register with Base (side-effect import)
+from src.models.memory import WorkflowMemoryORM
+from src.models.agent_run import AgentRun
+from src.models.approval import ApprovalRequest, ApprovalPolicy
+from src.models.audit_log import AuditLog
+from src.models.workflow import WorkflowORM
 
 # Sync engine for basic operations
 _sync_engine: Engine | None = None
@@ -27,7 +31,7 @@ def get_db_engine() -> Engine:
     if _sync_engine is None:
         _sync_engine = create_engine(
             settings.DATABASE_URL,
-            echo=settings.API_ENVIRONMENT == "development",
+            echo=settings.LOG_SQL,
             pool_pre_ping=True,
             pool_size=10,
             max_overflow=20,
@@ -40,11 +44,11 @@ async def get_async_engine() -> AsyncEngine:
     global _async_engine
     if _async_engine is None:
         _async_engine = create_async_engine(
-            settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
-            echo=settings.API_ENVIRONMENT == "development",
+            # psycopg3 (declared in pyproject.toml) supports async natively,
+            # so DATABASE_URL's "postgresql+psycopg://" scheme works as-is.
+            settings.DATABASE_URL,
+            echo=settings.LOG_SQL,
             pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
             poolclass=NullPool,
         )
     return _async_engine

@@ -1,13 +1,14 @@
 """
-Embedding Service: Generate and cache embeddings using Claude API.
+Embedding Service: Generate and cache embeddings via LiteLLM.
 
-Uses LiteLLM for Claude embeddings with Redis caching.
+Uses OpenAI's text-embedding-3-small (1536 dimensions) with Redis caching.
+Anthropic does not offer a public embeddings API, so this cannot use Claude.
 """
 
 import json
 import hashlib
 import logging
-from typing import List
+from typing import List, Optional, Dict
 
 from src.infrastructure.redis_client import get_redis_client
 from src.llm.gateway import get_llm_gateway
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    """Manages embeddings for workflow memory using Claude API."""
+    """Manages embeddings for workflow memory via LiteLLM (OpenAI)."""
 
     EMBEDDING_CACHE_TTL = 86400 * 7  # 7 days
     EMBEDDING_DIM = 1536
@@ -31,7 +32,7 @@ class EmbeddingService:
 
         Strategy:
         1. Check Redis cache
-        2. If miss, call Claude embeddings API
+        2. If miss, call the embeddings API
         3. Cache result for 7 days
 
         Args:
@@ -45,7 +46,7 @@ class EmbeddingService:
 
         # Try Redis cache first
         try:
-            cached = await self.redis_client.get(cache_key)
+            cached = self.redis_client.get(cache_key)
             if cached:
                 logger.debug(f"Embedding cache HIT for: {request[:50]}...")
                 embedding = json.loads(cached)
@@ -53,14 +54,14 @@ class EmbeddingService:
         except Exception as e:
             logger.warning(f"Redis cache read failed: {e}")
 
-        # Cache miss: call Claude API
+        # Cache miss: call the embeddings API
         try:
-            logger.debug(f"Embedding cache MISS, calling Claude API: {request[:50]}...")
+            logger.debug(f"Embedding cache MISS, calling embeddings API: {request[:50]}...")
             embedding = await self._call_embedding_api(request)
 
             # Cache the result
             try:
-                await self.redis_client.setex(
+                self.redis_client.setex(
                     cache_key,
                     self.EMBEDDING_CACHE_TTL,
                     json.dumps(embedding),
@@ -87,41 +88,48 @@ class EmbeddingService:
         Returns:
             List of embedding vectors
         """
-        embeddings = []
-        cache_hits = []
-        cache_misses = []
-        cache_miss_indices = []
-
-        # Check cache for all requests
+        # Track each request's embedding by its original index, deduping repeated
+        # texts within the batch so they only hit the cache/API once.
+        result: List[Optional[List[float]]] = [None] * len(requests)
+        indices_by_text: Dict[str, List[int]] = {}
         for i, request in enumerate(requests):
+            indices_by_text.setdefault(request, []).append(i)
+
+        cache_misses = []
+
+        # Check cache once per unique request text
+        for request, indices in indices_by_text.items():
             cache_key = self._get_cache_key(request)
             try:
-                cached = await self.redis_client.get(cache_key)
-                if cached:
-                    embeddings.append(json.loads(cached))
-                    cache_hits.append(request)
-                else:
-                    cache_misses.append(request)
-                    cache_miss_indices.append(i)
+                cached = self.redis_client.get(cache_key)
             except Exception as e:
                 logger.warning(f"Redis read failed: {e}")
+                cached = None
+
+            if cached:
+                embedding = json.loads(cached)
+                for i in indices:
+                    result[i] = embedding
+            else:
                 cache_misses.append(request)
-                cache_miss_indices.append(i)
 
         logger.info(
-            f"Batch embedding: {len(cache_hits)} hits, {len(cache_misses)} misses"
+            f"Batch embedding: {len(indices_by_text) - len(cache_misses)} hits, "
+            f"{len(cache_misses)} misses ({len(requests)} total requests)"
         )
 
-        # Call API for cache misses
+        # Call API for cache misses (each unique missing text once)
         if cache_misses:
             try:
                 api_results = await self._call_embedding_api_batch(cache_misses)
 
-                # Cache results
                 for request, embedding in zip(cache_misses, api_results):
+                    for i in indices_by_text[request]:
+                        result[i] = embedding
+
                     cache_key = self._get_cache_key(request)
                     try:
-                        await self.redis_client.setex(
+                        self.redis_client.setex(
                             cache_key,
                             self.EMBEDDING_CACHE_TTL,
                             json.dumps(embedding),
@@ -132,16 +140,6 @@ class EmbeddingService:
             except Exception as e:
                 logger.error(f"Batch embedding API call failed: {e}")
                 raise
-
-        # Combine results in original order
-        result = [None] * len(requests)
-        embedding_idx = 0
-
-        for i in range(len(requests)):
-            if i in cache_miss_indices:
-                result[i] = api_results[cache_miss_indices.index(i)]
-            else:
-                result[i] = cache_hits[len([x for x in cache_miss_indices if x < i])]
 
         return result
 
@@ -162,7 +160,8 @@ class EmbeddingService:
 
     async def _call_embedding_api(self, text: str) -> List[float]:
         """
-        Call Claude embedding API via LiteLLM.
+        Call the embedding API via LiteLLM (OpenAI text-embedding-3-small —
+        Anthropic has no public embeddings endpoint).
 
         Args:
             text: Text to embed
@@ -171,7 +170,7 @@ class EmbeddingService:
             Embedding vector
         """
         try:
-            response = await self.llm_gateway.embed(text=text, model="claude")
+            response = await self.llm_gateway.embed(text=text)
 
             # LiteLLM returns: {"data": [{"embedding": [...]}], "model": "..."}
             if "data" in response and len(response["data"]) > 0:

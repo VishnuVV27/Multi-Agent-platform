@@ -20,6 +20,8 @@ from src.agents.base import (
     register_agent,
 )
 from src.llm.gateway import get_llm_gateway
+from src.observability.progress import report_progress, make_llm_stream_reporter
+from src.prompts.registry import get_prompt_registry
 
 
 @register_agent
@@ -67,42 +69,41 @@ class WriterAgent(BaseAgent):
         try:
             instruction = task_input.instruction
             context = task_input.context or {}
-
-            # Extract writing context
-            research = context.get("research_findings", "")
-            analysis = context.get("analysis_insights", "")
             format_type = context.get("format", "report")
 
-            # Step 1: Build writing prompt with all available context
-            writing_prompt = f"""
-You are a professional writer. Generate high-quality {format_type} content.
+            # Extract upstream pipeline results (populated by the
+            # orchestrator from dependency task outputs). Falls back to the
+            # legacy explicit keys if a caller passes them directly.
+            upstream_block = self._format_upstream(
+                context.get("previous_results") or {},
+                research=context.get("research_findings", ""),
+                analysis=context.get("analysis_insights", ""),
+            )
 
-Original Task: {instruction}
+            # Step 1: Build writing prompt from the Prompt Registry
+            writing_prompt, prompt_version = get_prompt_registry().render(
+                "writer_report",
+                format_type=format_type,
+                instruction=instruction,
+                upstream_block=upstream_block or "(No upstream results — write from your own knowledge and say so briefly.)",
+            )
+            writing_prompt += self.skill_addendum(task_input)
 
-Research Findings:
-{research if research else "(No research provided)"}
-
-Analysis & Insights:
-{analysis if analysis else "(No analysis provided)"}
-
-Requirements:
-1. Professional, clear writing
-2. Well-structured with clear sections
-3. Actionable recommendations where relevant
-4. Proper formatting for {format_type}
-5. 500-1000 words
-
-Generate the {format_type} now:
-"""
-
-            # Step 2: Generate content using LLM
+            # Step 2: Generate content using LLM (token-streamed so Mission
+            # Control's DRAFT monitor shows the report writing itself live)
+            await report_progress(
+                task_input.workflow_id, self.AGENT_ID, "Drafting report…",
+            )
             llm_gateway = get_llm_gateway()
             response = await llm_gateway.generate(
                 workflow_id=task_input.workflow_id,
                 agent_id=self.AGENT_ID,
                 prompt=writing_prompt,
                 task_type="reasoning",
-                max_tokens=2000,  # Larger for writing
+                max_tokens=self.capped_max_tokens(task_input, 2000),  # Larger for writing
+                on_chunk=make_llm_stream_reporter(
+                    task_input.workflow_id, self.AGENT_ID, "Drafting report…",
+                ),
             )
 
             content = response.get("text", "")
@@ -125,6 +126,7 @@ Generate the {format_type} now:
                     "llm_cost": response.get("cost", 0),
                     "model": response.get("model"),
                     "format": format_type,
+                    "prompt_version": prompt_version,
                 },
             )
 
@@ -139,6 +141,60 @@ Generate the {format_type} now:
                     "retryable": True,
                 },
             )
+
+    @staticmethod
+    def _format_upstream(previous_results: Dict[str, Any], research: str = "", analysis: str = "") -> str:
+        """
+        Render upstream task results into a prompt block.
+
+        previous_results looks like {"t1": {research result}, "t2": {analysis
+        result}} — pull the human-meaningful fields per agent output shape and
+        fall back to compact JSON for anything unrecognized.
+        """
+        import json
+
+        blocks = []
+        for task_id, result in previous_results.items():
+            if not isinstance(result, dict):
+                blocks.append(f"[{task_id}] {str(result)[:2000]}")
+                continue
+            if "verdict" in result:  # critic output (check before "summary" — it has both)
+                blocks.append(
+                    f"[{task_id}] QUALITY REVIEW of your previous draft "
+                    f"(score {result.get('overall_score', '?')}/100 — address EVERY point):\n"
+                    f"{result.get('critique', '')}"
+                )
+            elif "code" in result:  # coding agent output (check before "summary")
+                blocks.append(
+                    f"[{task_id}] Code experiment:\n{result.get('summary', '')}\n"
+                    f"Code:\n{str(result['code'])[:1500]}\n"
+                    f"Real execution output:\n{str(result.get('execution_output', ''))[:800]}"
+                )
+            elif "summary" in result:  # research agent output
+                sources = "\n".join(
+                    f"  - {f.get('title', '')} ({f.get('url', '')})"
+                    for f in result.get("findings", [])[:5]
+                )
+                blocks.append(
+                    f"[{task_id}] Research notes:\n{result['summary']}\n"
+                    + (f"Sources:\n{sources}" if sources else "")
+                )
+            elif "analysis" in result:  # analysis agent output
+                blocks.append(f"[{task_id}] Analysis:\n{result['analysis']}")
+            elif "content" in result:  # prior writer output (follow-up thread)
+                blocks.append(
+                    f"[{task_id}] Previous report (revise/extend this — do not "
+                    f"start over unless asked):\n{str(result['content'])[:4000]}"
+                )
+            else:
+                blocks.append(f"[{task_id}] {json.dumps(result, default=str)[:2000]}")
+
+        if research:
+            blocks.append(f"Research findings:\n{research}")
+        if analysis:
+            blocks.append(f"Analysis & insights:\n{analysis}")
+
+        return "\n\n".join(blocks)
 
     def _extract_sections(self, content: str, format_type: str) -> list:
         """Extract sections from generated content."""

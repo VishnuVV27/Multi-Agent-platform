@@ -1,6 +1,10 @@
 from typing import List, Dict, Any
-import httpx
+import asyncio
+import logging
+
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class SearchResult(BaseModel):
@@ -12,7 +16,7 @@ class SearchResult(BaseModel):
 
 
 class WebSearchTool:
-    """Web search tool using DuckDuckGo or similar service."""
+    """Web search tool backed by DuckDuckGo (no API key required)."""
 
     TOOL_ID = "web_search"
     TOOL_NAME = "Web Search"
@@ -37,55 +41,56 @@ class WebSearchTool:
             }
         """
         try:
-            # For MVP: Return mock results
-            # Later: Integrate with actual search API (Google, DuckDuckGo, SerpAPI, etc.)
-            results = await self._search_mock(query, max_results)
+            results = await self._search_duckduckgo(query, max_results)
 
             return {
                 "success": True,
                 "query": query,
                 "results": results,
                 "count": len(results),
-                "note": "Using mock data for MVP. Replace with real search API.",
+                "source": "duckduckgo",
             }
 
         except Exception as e:
+            logger.warning(f"Web search failed for '{query}': {e}")
             return {
                 "success": False,
                 "query": query,
                 "error": str(e),
                 "results": [],
                 "count": 0,
+                "note": (
+                    "Live search unavailable (network or rate limit). "
+                    "Answer from model knowledge and say so."
+                ),
             }
 
-    async def _search_mock(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+    async def _search_duckduckgo(
+        self, query: str, max_results: int
+    ) -> List[Dict[str, Any]]:
         """
-        Return mock search results for MVP.
+        Search DuckDuckGo via the ddgs package.
 
-        Replace this with real API call (SerpAPI, Google Custom Search, etc.)
+        ddgs is synchronous, so run it in a thread to avoid blocking the
+        event loop (this executes inside Temporal activity workers).
         """
-        mock_results = [
-            {
-                "position": 1,
-                "title": f"Result 1: {query}",
-                "url": f"https://example.com/1-{query.replace(' ', '-')}",
-                "snippet": f"This is a mock result for: {query}. In production, this would come from a real search API.",
-            },
-            {
-                "position": 2,
-                "title": f"Result 2: {query} analysis",
-                "url": f"https://example.com/2-{query.replace(' ', '-')}",
-                "snippet": f"More detailed information about {query} from a secondary source.",
-            },
-            {
-                "position": 3,
-                "title": f"Result 3: {query} overview",
-                "url": f"https://example.com/3-{query.replace(' ', '-')}",
-                "snippet": f"Comprehensive overview of {query} and related topics.",
-            },
-        ]
+        def _search_sync() -> List[Dict[str, Any]]:
+            from ddgs import DDGS
 
-        return mock_results[:max_results]
+            raw = DDGS().text(query, max_results=max_results)
+            results = []
+            for i, item in enumerate(raw, start=1):
+                results.append(
+                    {
+                        "position": i,
+                        "title": item.get("title", ""),
+                        "url": item.get("href", ""),
+                        "snippet": item.get("body", ""),
+                    }
+                )
+            return results
+
+        return await asyncio.to_thread(_search_sync)
 
     def get_manifest(self) -> Dict[str, Any]:
         """Return tool metadata."""

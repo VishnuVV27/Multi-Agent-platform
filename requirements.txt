@@ -1,0 +1,33 @@
+# Multi-Agent AI Platform — Python dependencies
+# Install: pip install -r requirements.txt
+# Requires Python 3.12+
+
+# API
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
+python-dotenv==1.2.2
+
+# Orchestration
+temporalio==1.30.0
+
+# LLM Gateway
+litellm==1.92.0
+openai==2.46.0
+
+# Data layer
+SQLAlchemy==2.0.51
+psycopg[binary]==3.3.4
+pgvector==0.5.0
+redis==8.0.1
+
+# Events
+confluent-kafka==2.15.0
+
+# Observability
+langfuse==4.14.0
+
+# Tools
+ddgs==9.14.4
+httpx==0.28.1

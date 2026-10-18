@@ -1,16 +1,22 @@
 """
-Code Executor Tool: Execute Python code safely in a sandbox.
+Code Executor Tool: Execute Python code in an isolated subprocess.
 
 Security:
-- Timeout enforcement (prevent infinite loops)
-- Restricted builtins (no file/network access)
-- Output capture
+- AST validation first (no imports, no exec/eval, no file ops)
+- Runs in `python -I` isolated mode as a separate process
+- Hard timeout enforcement (process killed on expiry)
+- Output capture with length cap
+
+Upgrade path (per CLAUDE.md Tool Execution Layer): move to a Docker/
+Firecracker sandbox for true network/filesystem isolation before
+allowing untrusted multi-tenant code.
 """
 
 from typing import Dict, Any, Optional
 import ast
+import asyncio
 import sys
-from io import StringIO
+import time
 
 
 class CodeExecutorTool:
@@ -61,15 +67,40 @@ class CodeExecutorTool:
 
             timeout = min(timeout_seconds or self.TIMEOUT_SECONDS, self.TIMEOUT_SECONDS)
 
-            # For MVP: Return mock execution
-            # Later: Use actual sandbox (Docker, Firecracker, etc.)
-            mock_output = f"Executed code (mock):\n{code[:100]}..."
+            start = time.time()
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-I", "-c", code,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return {
+                    "success": False,
+                    "error": f"Execution timed out after {timeout}s",
+                }
+
+            execution_time_ms = round((time.time() - start) * 1000, 1)
+            output = stdout.decode("utf-8", "replace")[: self.MAX_OUTPUT_LENGTH]
+            errors = stderr.decode("utf-8", "replace")[: self.MAX_OUTPUT_LENGTH]
+
+            if proc.returncode != 0:
+                return {
+                    "success": False,
+                    "output": output,
+                    "error": errors or f"Process exited with code {proc.returncode}",
+                    "execution_time_ms": execution_time_ms,
+                }
 
             return {
                 "success": True,
-                "output": mock_output,
-                "execution_time_ms": 150,
-                "note": "Using mock execution for MVP. Replace with real sandbox.",
+                "output": output,
+                "execution_time_ms": execution_time_ms,
             }
 
         except Exception as e:
@@ -78,9 +109,21 @@ class CodeExecutorTool:
                 "error": str(e),
             }
 
+    # Pure-computation stdlib modules with no file/network/process access.
+    # Banning ALL imports made real work impossible (e.g. a Monte Carlo
+    # simulation without `random` degenerates into deterministic nonsense) —
+    # the isolated `python -I` subprocess remains the hard boundary; this
+    # allowlist just keeps os/sys/socket/subprocess/urllib-class modules out.
+    ALLOWED_MODULES = {
+        "math", "random", "statistics", "itertools", "collections",
+        "functools", "json", "datetime", "re", "decimal", "fractions",
+        "heapq", "string", "bisect", "textwrap",
+    }
+
     def _is_safe_code(self, code: str) -> bool:
         """
-        Validate code is safe (no file/network/import).
+        Validate code is safe: only allowlisted pure-computation imports,
+        no file operations, no exec/eval.
 
         Args:
             code: Python code to validate
@@ -95,9 +138,14 @@ class CodeExecutorTool:
 
         # Check for unsafe patterns
         for node in ast.walk(tree):
-            # No imports
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                return False
+            # Imports: allowlist only
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] not in self.ALLOWED_MODULES:
+                        return False
+            if isinstance(node, ast.ImportFrom):
+                if (node.module or "").split(".")[0] not in self.ALLOWED_MODULES:
+                    return False
 
             # No file operations
             if isinstance(node, ast.Attribute):
@@ -107,7 +155,7 @@ class CodeExecutorTool:
             # No exec/eval
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name):
-                    if node.func.id in ["exec", "eval", "__import__"]:
+                    if node.func.id in ["exec", "eval", "__import__", "open"]:
                         return False
 
         return True

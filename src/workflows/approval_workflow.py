@@ -10,12 +10,11 @@ Flow:
 """
 
 from temporalio import workflow, activity
+from temporalio.common import RetryPolicy
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Dict, Any, Optional
 import asyncio
-
-from src.approval.service import get_approval_service
-from src.approval.models import ApprovalRisk
 
 
 @dataclass
@@ -43,6 +42,11 @@ class ApprovalWorkflowOutput:
 @activity.defn
 async def create_approval_activity(input_data: ApprovalWorkflowInput) -> str:
     """Create an approval request and return its ID."""
+    # Imported locally: get_approval_service() pulls in src.config (reads
+    # .env via pathlib), which Temporal's workflow sandbox restricts if
+    # imported at module level in a file that also defines a @workflow.defn.
+    from src.approval.service import get_approval_service
+
     service = get_approval_service()
     approval = await service.create_approval_request(
         workflow_id=input_data.workflow_id,
@@ -100,7 +104,8 @@ class ApprovalWorkflow:
             approval_id = await workflow.execute_activity(
                 create_approval_activity,
                 input_data,
-                start_to_close_timeout=300,
+                start_to_close_timeout=timedelta(seconds=300),
+                retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
             # Step 2: Wait for approval signal (blocking)

@@ -6,14 +6,18 @@ Handles:
 - Routing based on risk level
 - Approving/rejecting
 - Temporal workflow coordination
+
+Persists to PostgreSQL (approval_requests table) so requests survive
+restarts and can be listed/aggregated for the dashboard.
 """
 
+import asyncio
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from src.models.approval import ApprovalRequest, ApprovalStatus, ApprovalRisk, ApprovalPolicy
-from src.infrastructure.redis_client import cache_set, cache_get, cache_delete
+from src.infrastructure.database import get_db
+from src.models.approval import ApprovalRequest as ApprovalRequestORM, ApprovalStatus, ApprovalRisk
 
 
 class ApprovalPolicyEngine:
@@ -61,11 +65,31 @@ class ApprovalPolicyEngine:
         )
 
 
+def _to_dict(row: ApprovalRequestORM) -> Dict[str, Any]:
+    """Convert an ORM row to the dict shape the routes layer expects."""
+    return {
+        "id": str(row.id),
+        "approval_id": str(row.id),
+        "workflow_id": row.workflow_id,
+        "task_id": row.task_id,
+        "agent_id": row.agent_id,
+        "action": row.action,
+        "description": row.description,
+        "risk_level": row.risk_level.value if row.risk_level else None,
+        "status": row.status.value if row.status else None,
+        "required_approvers": row.required_approvers,
+        "context": row.context or {},
+        "approved_by": row.approved_by,
+        "approved_at": row.approved_at.isoformat() if row.approved_at else None,
+        "rejected_by": row.approved_by if row.status == ApprovalStatus.REJECTED else None,
+        "rejection_reason": row.rejection_reason,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+    }
+
+
 class ApprovalService:
     """Manage approval requests and workflow."""
-
-    CACHE_PREFIX = "approval:"
-    CACHE_TTL = 3600  # 1 hour
 
     async def create_approval_request(
         self,
@@ -76,61 +100,60 @@ class ApprovalService:
         description: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """
-        Create an approval request.
-
-        Args:
-            workflow_id: Workflow ID
-            task_id: Task ID
-            agent_id: Agent requesting approval
-            action: Action requiring approval
-            description: Description of the action
-            context: Full context (for display to approver)
-
-        Returns:
-            Approval request details
-        """
-        # Get policy for this action
+        """Create and persist an approval request."""
         policy = ApprovalPolicyEngine.get_policy(action)
+        expires_at = datetime.utcnow() + timedelta(minutes=policy["timeout_minutes"])
 
-        approval_id = str(uuid4())
-        expires_at = datetime.utcnow() + timedelta(
-            minutes=policy["timeout_minutes"]
+        loop = asyncio.get_event_loop()
+        row = await loop.run_in_executor(
+            None,
+            self._create_sync,
+            workflow_id, task_id, agent_id, action, description,
+            policy["risk_level"], policy["required_approvers"], context, expires_at,
         )
+        return _to_dict(row)
 
-        approval_data = {
-            "approval_id": approval_id,
-            "workflow_id": workflow_id,
-            "task_id": task_id,
-            "agent_id": agent_id,
-            "action": action,
-            "description": description,
-            "risk_level": policy["risk_level"].value,
-            "status": ApprovalStatus.PENDING.value,
-            "required_approvers": policy["required_approvers"],
-            "context": context or {},
-            "created_at": datetime.utcnow().isoformat(),
-            "expires_at": expires_at.isoformat(),
-            "approved_by": None,
-            "approved_at": None,
-        }
-
-        # Cache the approval request
-        cache_key = f"{self.CACHE_PREFIX}{approval_id}"
-        await cache_set(cache_key, str(approval_data), ttl=self.CACHE_TTL)
-
-        # TODO: Store in database for persistence
-
-        return approval_data
+    def _create_sync(
+        self, workflow_id, task_id, agent_id, action, description,
+        risk_level, required_approvers, context, expires_at,
+    ) -> ApprovalRequestORM:
+        db = get_db()
+        try:
+            row = ApprovalRequestORM(
+                id=uuid4(),
+                workflow_id=workflow_id,
+                task_id=task_id,
+                agent_id=agent_id,
+                action=action,
+                description=description,
+                risk_level=risk_level,
+                status=ApprovalStatus.PENDING,
+                required_approvers=required_approvers,
+                context=context or {},
+                created_at=datetime.utcnow(),
+                expires_at=expires_at,
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return row
+        finally:
+            db.close()
 
     async def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
-        """Get an approval request."""
-        cache_key = f"{self.CACHE_PREFIX}{approval_id}"
-        data = await cache_get(cache_key)
-        if data:
-            import ast
-            return ast.literal_eval(data)
-        return None
+        """Get an approval request by ID."""
+        loop = asyncio.get_event_loop()
+        row = await loop.run_in_executor(None, self._get_sync, approval_id)
+        return _to_dict(row) if row else None
+
+    def _get_sync(self, approval_id: str) -> Optional[ApprovalRequestORM]:
+        db = get_db()
+        try:
+            return db.query(ApprovalRequestORM).filter(
+                ApprovalRequestORM.id == approval_id
+            ).first()
+        finally:
+            db.close()
 
     async def approve(
         self,
@@ -138,42 +161,10 @@ class ApprovalService:
         approved_by: str,
         comments: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Approve a request.
-
-        Args:
-            approval_id: Approval ID
-            approved_by: User ID approving
-            comments: Optional approval comments
-
-        Returns:
-            Updated approval details
-        """
-        approval = await self.get_approval(approval_id)
-        if not approval:
-            raise ValueError(f"Approval {approval_id} not found")
-
-        if approval["status"] != ApprovalStatus.PENDING.value:
-            raise ValueError(f"Approval already {approval['status']}")
-
-        if approval["expires_at"]:
-            expires = datetime.fromisoformat(approval["expires_at"])
-            if datetime.utcnow() > expires:
-                approval["status"] = ApprovalStatus.EXPIRED.value
-                raise ValueError("Approval request expired")
-
-        # Update approval
-        approval["status"] = ApprovalStatus.APPROVED.value
-        approval["approved_by"] = approved_by
-        approval["approved_at"] = datetime.utcnow().isoformat()
-
-        # Cache updated approval
-        cache_key = f"{self.CACHE_PREFIX}{approval_id}"
-        await cache_set(cache_key, str(approval), ttl=self.CACHE_TTL)
-
-        # TODO: Update database
-
-        return approval
+        """Approve a request."""
+        loop = asyncio.get_event_loop()
+        row = await loop.run_in_executor(None, self._decide_sync, approval_id, ApprovalStatus.APPROVED, approved_by, None)
+        return _to_dict(row)
 
     async def reject(
         self,
@@ -181,52 +172,85 @@ class ApprovalService:
         rejected_by: str,
         reason: str,
     ) -> Dict[str, Any]:
-        """
-        Reject a request.
+        """Reject a request."""
+        loop = asyncio.get_event_loop()
+        row = await loop.run_in_executor(None, self._decide_sync, approval_id, ApprovalStatus.REJECTED, rejected_by, reason)
+        return _to_dict(row)
 
-        Args:
-            approval_id: Approval ID
-            rejected_by: User ID rejecting
-            reason: Reason for rejection
+    def _decide_sync(
+        self, approval_id: str, new_status: ApprovalStatus, decided_by: str, reason: Optional[str],
+    ) -> ApprovalRequestORM:
+        db = get_db()
+        try:
+            row = db.query(ApprovalRequestORM).filter(
+                ApprovalRequestORM.id == approval_id
+            ).first()
+            if not row:
+                raise ValueError(f"Approval {approval_id} not found")
 
-        Returns:
-            Updated approval details
-        """
-        approval = await self.get_approval(approval_id)
-        if not approval:
-            raise ValueError(f"Approval {approval_id} not found")
+            if row.status != ApprovalStatus.PENDING:
+                raise ValueError(f"Approval already {row.status.value}")
 
-        if approval["status"] != ApprovalStatus.PENDING.value:
-            raise ValueError(f"Approval already {approval['status']}")
+            if row.is_expired():
+                row.status = ApprovalStatus.EXPIRED
+                db.commit()
+                raise ValueError("Approval request expired")
 
-        # Update approval
-        approval["status"] = ApprovalStatus.REJECTED.value
-        approval["rejected_by"] = rejected_by
-        approval["rejection_reason"] = reason
+            row.status = new_status
+            row.approved_by = decided_by
+            row.completed_at = datetime.utcnow()
+            if new_status == ApprovalStatus.APPROVED:
+                row.approved_at = datetime.utcnow()
+            else:
+                row.rejection_reason = reason
 
-        # Cache updated approval
-        cache_key = f"{self.CACHE_PREFIX}{approval_id}"
-        await cache_set(cache_key, str(approval), ttl=self.CACHE_TTL)
-
-        # TODO: Update database
-
-        return approval
+            db.commit()
+            db.refresh(row)
+            return row
+        finally:
+            db.close()
 
     async def list_pending(self) -> List[Dict[str, Any]]:
-        """List all pending approvals."""
-        # TODO: Query from database
-        # For MVP: return empty list
-        return []
+        """List all pending approval requests, most recent first."""
+        loop = asyncio.get_event_loop()
+        rows = await loop.run_in_executor(None, self._list_pending_sync)
+        return [_to_dict(r) for r in rows]
+
+    def _list_pending_sync(self) -> List[ApprovalRequestORM]:
+        db = get_db()
+        try:
+            return (
+                db.query(ApprovalRequestORM)
+                .filter(ApprovalRequestORM.status == ApprovalStatus.PENDING)
+                .order_by(ApprovalRequestORM.created_at.desc())
+                .limit(100)
+                .all()
+            )
+        finally:
+            db.close()
 
     async def get_statistics(self) -> Dict[str, Any]:
-        """Get approval statistics."""
-        return {
-            "total_approvals": 0,
-            "pending": 0,
-            "approved": 0,
-            "rejected": 0,
-            "expired": 0,
-        }
+        """Get approval workflow statistics."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._get_statistics_sync)
+
+    def _get_statistics_sync(self) -> Dict[str, Any]:
+        db = get_db()
+        try:
+            counts = {status: 0 for status in ApprovalStatus}
+            rows = db.query(ApprovalRequestORM.status, ApprovalRequestORM.id).all()
+            for status, _ in rows:
+                counts[status] = counts.get(status, 0) + 1
+
+            return {
+                "total_approvals": len(rows),
+                "pending": counts.get(ApprovalStatus.PENDING, 0),
+                "approved": counts.get(ApprovalStatus.APPROVED, 0),
+                "rejected": counts.get(ApprovalStatus.REJECTED, 0),
+                "expired": counts.get(ApprovalStatus.EXPIRED, 0),
+            }
+        finally:
+            db.close()
 
 
 # Global service instance

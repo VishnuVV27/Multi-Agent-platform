@@ -7,11 +7,10 @@ Endpoints for retrieving similar workflows, storing memories, and analytics.
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 
-from src.memory.memory_store import MemoryStore
+from src.memory.memory_store import get_memory_store
 from src.memory.models import RetrievalRequest, RetrievalResponse, WorkflowMemory
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
-memory_store = MemoryStore()
 
 
 @router.post("/retrieve", response_model=RetrievalResponse)
@@ -40,7 +39,7 @@ async def retrieve_similar_workflows(request: RetrievalRequest):
     }
     """
     try:
-        response = await memory_store.retrieve_workflows(request)
+        response = await get_memory_store().retrieve_workflows(request)
         return response
 
     except Exception as e:
@@ -62,7 +61,7 @@ async def get_workflow_memory(workflow_id: str):
     GET /api/memory/workflows/wf_123
     """
     try:
-        memory = await memory_store.get_workflow_memory(workflow_id)
+        memory = await get_memory_store().get_workflow_memory(workflow_id)
         if not memory:
             raise HTTPException(status_code=404, detail="Workflow not found")
         return memory
@@ -91,7 +90,7 @@ async def get_memory_statistics():
     GET /api/memory/statistics
     """
     try:
-        stats = await memory_store.get_memory_statistics()
+        stats = await get_memory_store().get_memory_statistics()
         return stats
 
     except Exception as e:
@@ -115,7 +114,7 @@ async def delete_old_memories(days: int = Query(90, ge=1, le=365)):
     DELETE /api/memory/old?days=90
     """
     try:
-        deleted_count = await memory_store.delete_old_memories(days=days)
+        deleted_count = await get_memory_store().delete_old_memories(days=days)
         return {
             "deleted_count": deleted_count,
             "days_threshold": days,
@@ -156,7 +155,7 @@ async def search_memories(
             min_similarity=min_similarity,
         )
 
-        response = await memory_store.retrieve_workflows(request)
+        response = await get_memory_store().retrieve_workflows(request)
 
         return {
             "query": query,

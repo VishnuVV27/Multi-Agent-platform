@@ -10,6 +10,8 @@ from src.agents.base import (
 )
 from src.tools.gateway import get_tool_gateway
 from src.llm.gateway import get_llm_gateway
+from src.observability.progress import report_progress, make_llm_stream_reporter
+from src.prompts.registry import get_prompt_registry
 
 
 @register_agent
@@ -58,6 +60,10 @@ class ResearchAgent(BaseAgent):
             search_query = self._extract_search_query(instruction, context)
 
             # Step 2: Execute web search through Tool Gateway
+            await report_progress(
+                task_input.workflow_id, self.AGENT_ID,
+                "Searching the web…", detail=search_query[:120],
+            )
             tool_gateway = get_tool_gateway()
             search_result = await tool_gateway.execute_tool(
                 agent_id=self.AGENT_ID,
@@ -68,27 +74,48 @@ class ResearchAgent(BaseAgent):
                 }
             )
 
-            if not search_result.get("success"):
-                raise Exception(f"Web search failed: {search_result.get('error')}")
-
-            # Step 3: Process and aggregate results
+            # Step 3: Process and aggregate results. If live search failed
+            # (network down, rate limit), continue with model knowledge
+            # rather than failing the whole workflow — but say so.
             findings = self._process_search_results(search_result.get("results", []))
+            search_ok = bool(search_result.get("success", False) and findings)
 
-            # Step 4: Generate summary using LLM
+            await report_progress(
+                task_input.workflow_id, self.AGENT_ID,
+                f"Found {len(findings)} live sources" if search_ok else "Live search unavailable — using model knowledge",
+                detail="; ".join(f.get("title", "")[:60] for f in findings[:3]),
+            )
+
+            # Step 4: Synthesize research notes using LLM (prompt text and
+            # version come from the Prompt Registry, not code)
             llm_gateway = get_llm_gateway()
-            summary_prompt = f"""
-Based on these search results about "{search_query}":
+            registry = get_prompt_registry()
+            if search_ok:
+                sources_block = chr(10).join(
+                    f"[{f['position']}] {f['title']} ({f['url']})\n    {f['snippet']}"
+                    for f in findings
+                )
+                summary_prompt, prompt_version = registry.render(
+                    "research_synthesis",
+                    search_query=search_query,
+                    sources_block=sources_block,
+                )
+            else:
+                summary_prompt, prompt_version = registry.render(
+                    "research_synthesis_offline",
+                    search_query=search_query,
+                )
+            summary_prompt += self.skill_addendum(task_input)
 
-{chr(10).join([f"- {f['title']}: {f['snippet']}" for f in findings[:3]])}
-
-Please provide a concise summary (2-3 sentences) of the key findings.
-"""
             llm_response = await llm_gateway.generate(
                 workflow_id=task_input.workflow_id,
                 agent_id=self.AGENT_ID,
                 prompt=summary_prompt,
                 task_type="fast",
-                max_tokens=200,
+                max_tokens=self.capped_max_tokens(task_input, 700),
+                on_chunk=make_llm_stream_reporter(
+                    task_input.workflow_id, self.AGENT_ID, "Synthesizing research notes…",
+                ),
             )
             summary = llm_response.get("text", "")
             llm_cost = llm_response.get("cost", 0)
@@ -103,11 +130,13 @@ Please provide a concise summary (2-3 sentences) of the key findings.
                     "findings": findings,
                     "summary": summary,
                     "result_count": len(findings),
+                    "live_search": search_ok,
                 },
                 tokens_used=llm_tokens,
                 metadata={
                     "llm_cost": llm_cost,
                     "model": llm_response.get("model"),
+                    "prompt_version": prompt_version,
                 },
             )
 

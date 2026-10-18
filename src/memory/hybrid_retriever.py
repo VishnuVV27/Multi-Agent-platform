@@ -9,7 +9,7 @@ Two-stage retrieval for optimal workflow matching:
 import logging
 import time
 import asyncio
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 from sqlalchemy import text, func
 
 from src.infrastructure.database import get_db
@@ -18,6 +18,16 @@ from src.memory.models import WorkflowMemory, RankedWorkflow
 from src.memory.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
+
+
+class RetrievalOutcome(NamedTuple):
+    """Results plus the candidate-generation stats callers need for observability."""
+
+    results: List[RankedWorkflow]
+    sparse_results_count: int
+    dense_results_count: int
+    candidate_pool_size: int
+    rerank_time_ms: float
 
 
 class HybridRetriever:
@@ -39,7 +49,7 @@ class HybridRetriever:
         min_similarity: float = 0.5,
         filter_success_only: bool = False,
         filter_agents: Optional[List[str]] = None,
-    ) -> List[RankedWorkflow]:
+    ) -> RetrievalOutcome:
         """
         Retrieve top-K similar workflows using hybrid search.
 
@@ -59,7 +69,7 @@ class HybridRetriever:
             filter_agents: Filter by specific agent combinations
 
         Returns:
-            List of RankedWorkflow objects, ranked by score
+            RetrievalOutcome with the ranked results and candidate-generation stats
         """
         start_time = time.time()
 
@@ -122,11 +132,23 @@ class HybridRetriever:
                 f"Hybrid retrieval: {len(results)} results in {total_time_ms:.1f}ms"
             )
 
-            return results
+            return RetrievalOutcome(
+                results=results,
+                sparse_results_count=len(bm25_candidates),
+                dense_results_count=len(dense_candidates),
+                candidate_pool_size=len(candidate_pool),
+                rerank_time_ms=rerank_time_ms,
+            )
 
         except Exception as e:
             logger.error(f"Retrieval failed: {e}")
-            return []
+            return RetrievalOutcome(
+                results=[],
+                sparse_results_count=0,
+                dense_results_count=0,
+                candidate_pool_size=0,
+                rerank_time_ms=0.0,
+            )
 
     def _bm25_search_sync(
         self,
@@ -135,9 +157,20 @@ class HybridRetriever:
         filter_success_only: bool = False,
     ) -> List[WorkflowMemory]:
         """
-        BM25 full-text search using PostgreSQL full-text search.
+        Sparse lexical search via PostgreSQL full-text search.
 
-        Keyword matching for precise results.
+        Matches against the generated `request_tsv` tsvector column (GIN
+        indexed): proper stemming ("startups" matches "startup"), stop-word
+        handling, and any-term matching ranked by ts_rank_cd — unlike the
+        previous ILIKE, which required the entire query to appear as one
+        contiguous substring and almost never matched non-identical requests.
+
+        websearch_to_tsquery parses arbitrary user text safely (quotes, OR,
+        -exclusions) without tsquery syntax errors.
+
+        Note: ts_rank_cd is TF/proximity-based ranking, not literal BM25
+        (no IDF term); at this corpus size the difference is immaterial, and
+        the rerank stage re-scores candidates anyway.
 
         Args:
             query: Search query
@@ -145,26 +178,23 @@ class HybridRetriever:
             filter_success_only: Only successful workflows
 
         Returns:
-            List of WorkflowMemory objects
+            List of WorkflowMemory objects, best lexical matches first
         """
         db = get_db()
         try:
-            # For now, use simple keyword matching
-            # Future: implement proper BM25 with tsvector/tsquery
             sql_query = """
-            SELECT * FROM workflow_memories
-            WHERE user_request ILIKE :query_pattern
+            SELECT m.*, ts_rank_cd(m.request_tsv, q) AS ts_rank
+            FROM workflow_memories m, websearch_to_tsquery('english', :query) q
+            WHERE m.request_tsv @@ q
             """
 
             if filter_success_only:
-                sql_query += " AND success = true"
+                sql_query += " AND m.success = true"
 
-            sql_query += " LIMIT :limit"
-
-            query_pattern = f"%{query}%"
+            sql_query += " ORDER BY ts_rank DESC LIMIT :limit"
 
             result = db.execute(
-                text(sql_query), {"query_pattern": query_pattern, "limit": limit}
+                text(sql_query), {"query": query, "limit": limit}
             ).mappings()
 
             memories = []
@@ -173,11 +203,11 @@ class HybridRetriever:
                 if memory:
                     memories.append(memory)
 
-            logger.debug(f"BM25 found {len(memories)} results for: {query[:50]}")
+            logger.debug(f"Full-text search found {len(memories)} results for: {query[:50]}")
             return memories
 
         except Exception as e:
-            logger.warning(f"BM25 search failed: {e}")
+            logger.warning(f"Full-text search failed: {e}")
             return []
         finally:
             db.close()
@@ -205,27 +235,36 @@ class HybridRetriever:
         """
         db = get_db()
         try:
-            # Vector similarity search with cosine distance
+            # Vector similarity search with cosine distance.
+            # CAST(:embedding AS vector) rather than the `::vector` shorthand
+            # right after a bind param — SQLAlchemy's text() parameter parser
+            # misreads "::" immediately following ":name" as part of the
+            # parameter token, raising a syntax error that this function's
+            # own try/except was silently swallowing (dense search always
+            # returned zero results). The embedding must also be passed as a
+            # string ("[0.1,0.2,...]"), not a raw Python list, for psycopg to
+            # hand it to pgvector's text input format correctly.
             max_distance = 1.0 - min_similarity
+            embedding_param = str(query_embedding)
 
             sql_query = """
             SELECT *
             FROM workflow_memories
-            WHERE (request_embedding <=> :embedding::vector) < :max_distance
+            WHERE (request_embedding <=> CAST(:embedding AS vector)) < :max_distance
             """
 
             if filter_success_only:
                 sql_query += " AND success = true"
 
             sql_query += """
-            ORDER BY request_embedding <=> :embedding::vector ASC
+            ORDER BY request_embedding <=> CAST(:embedding AS vector) ASC
             LIMIT :limit
             """
 
             result = db.execute(
                 text(sql_query),
                 {
-                    "embedding": query_embedding,
+                    "embedding": embedding_param,
                     "max_distance": max_distance,
                     "limit": limit,
                 },
@@ -406,11 +445,20 @@ class HybridRetriever:
     def _row_to_memory(row: dict) -> Optional[WorkflowMemory]:
         """Convert database row to WorkflowMemory."""
         try:
+            raw_embedding = row.get("request_embedding")
+            # Raw SQL (text()) queries return pgvector columns as their text
+            # representation ("[0.1,0.2,...]"), not a pre-parsed Python list
+            # the way an ORM-typed query would — parse it here.
+            if isinstance(raw_embedding, str):
+                embedding = [float(x) for x in raw_embedding.strip("[]").split(",")]
+            else:
+                embedding = raw_embedding
+
             return WorkflowMemory(
                 id=str(row["id"]),
                 workflow_id=row["workflow_id"],
                 user_request=row["user_request"],
-                request_embedding=row.get("request_embedding"),
+                request_embedding=embedding,
                 agents_selected=row.get("agents_selected", []),
                 agent_count=row.get("agent_count", 0),
                 execution_time_ms=row.get("execution_time_ms", 0),

@@ -1,12 +1,14 @@
-import { Activity, Check, X, Clock } from 'lucide-react'
+import { Activity, Check, X, Clock, ShieldCheck, Ban } from 'lucide-react'
 
-type Status = 'running' | 'completed' | 'failed' | 'pending' | string
+type Status = 'running' | 'completed' | 'failed' | 'pending' | 'waiting_approval' | 'rejected' | string
 
 const STATUS_STYLES: Record<string, string> = {
   running: 'bg-blue-500/20 text-blue-300',
   completed: 'bg-emerald-500/20 text-emerald-300',
   failed: 'bg-red-500/20 text-red-300',
   pending: 'bg-amber-500/20 text-amber-300',
+  waiting_approval: 'bg-amber-500/20 text-amber-300',
+  rejected: 'bg-red-500/20 text-red-300',
 }
 
 const STATUS_ICONS: Record<string, JSX.Element> = {
@@ -14,6 +16,8 @@ const STATUS_ICONS: Record<string, JSX.Element> = {
   completed: <Check className="w-3.5 h-3.5" />,
   failed: <X className="w-3.5 h-3.5" />,
   pending: <Clock className="w-3.5 h-3.5" />,
+  waiting_approval: <ShieldCheck className="w-3.5 h-3.5" />,
+  rejected: <Ban className="w-3.5 h-3.5" />,
 }
 
 export default function StatusBadge({ status }: { status: Status }) {
@@ -23,7 +27,7 @@ export default function StatusBadge({ status }: { status: Status }) {
   return (
     <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium backdrop-blur-sm ${style}`}>
       {icon}
-      {status}
+      {status.replace('_', ' ')}
     </span>
   )
 }

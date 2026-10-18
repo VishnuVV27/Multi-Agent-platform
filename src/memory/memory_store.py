@@ -178,7 +178,7 @@ class MemoryStore:
 
             # Retrieve using hybrid search
             retriever = HybridRetriever(self.embedding_service)
-            ranked_results = await retriever.retrieve(
+            outcome = await retriever.retrieve(
                 query=request.query,
                 query_embedding=query_embedding,
                 top_k=request.top_k,
@@ -190,17 +190,17 @@ class MemoryStore:
             retrieval_time_ms = (time.time() - start_time) * 1000
 
             logger.info(
-                f"Retrieved {len(ranked_results)} workflows in {retrieval_time_ms:.1f}ms"
+                f"Retrieved {len(outcome.results)} workflows in {retrieval_time_ms:.1f}ms"
             )
 
             return RetrievalResponse(
                 query=request.query,
-                results=ranked_results,
+                results=outcome.results,
                 retrieval_time_ms=retrieval_time_ms,
-                sparse_results_count=0,  # Populated by retriever
-                dense_results_count=0,  # Populated by retriever
-                candidate_pool_size=0,  # Populated by retriever
-                took_rerank_time_ms=0,  # Populated by retriever
+                sparse_results_count=outcome.sparse_results_count,
+                dense_results_count=outcome.dense_results_count,
+                candidate_pool_size=outcome.candidate_pool_size,
+                took_rerank_time_ms=outcome.rerank_time_ms,
             )
 
         except Exception as e:
@@ -357,3 +357,17 @@ class MemoryStore:
             created_at=orm_obj.created_at,
             updated_at=orm_obj.updated_at,
         )
+
+
+# Global memory store instance (lazy singleton — must NOT be constructed at
+# module import time, since EmbeddingService requires Redis to already be
+# initialized via init_redis(), which only runs during app startup)
+_memory_store: Optional[MemoryStore] = None
+
+
+def get_memory_store() -> MemoryStore:
+    """Get the global memory store, creating it on first use."""
+    global _memory_store
+    if _memory_store is None:
+        _memory_store = MemoryStore()
+    return _memory_store

@@ -1,9 +1,10 @@
 from temporalio import workflow, activity
-from dataclasses import dataclass
+from temporalio.common import RetryPolicy
+from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Dict, Any
 
 from src.agents.base import TaskInput, TaskOutput
-from src.agents.research_agent import ResearchAgent
 
 
 @dataclass
@@ -12,13 +13,19 @@ class ResearchWorkflowInput:
     task_id: str
     workflow_id: str
     instruction: str
-    context: Dict[str, Any] = None
+    context: Dict[str, Any] = field(default_factory=dict)
 
 
 # Activity: Execute Research Agent
 @activity.defn
 async def run_research_activity(input_data: ResearchWorkflowInput) -> TaskOutput:
     """Execute Research Agent as a Temporal activity."""
+    # Imported locally (not at module level): ResearchAgent pulls in litellm ->
+    # httpx -> urllib, which Temporal's workflow sandbox restricts. Since this
+    # file also defines a @workflow.defn class, top-level imports here are
+    # sandboxed even though only this activity function needs them.
+    from src.agents.research_agent import ResearchAgent
+
     agent = ResearchAgent()
 
     task_input = TaskInput(
@@ -43,6 +50,7 @@ class ResearchWorkflow:
         output = await workflow.execute_activity(
             run_research_activity,
             input_data,
-            start_to_close_timeout=300,
+            start_to_close_timeout=timedelta(seconds=300),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
         return output

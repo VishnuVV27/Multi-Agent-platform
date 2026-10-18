@@ -10,9 +10,8 @@ from src.agents.base import (
     register_agent,
 )
 from src.llm.gateway import get_llm_gateway
+from src.prompts.registry import get_prompt_registry
 from src.agents.supervisor_prompts import (
-    get_supervisor_planning_prompt,
-    SUPERVISOR_SYSTEM_PROMPT,
     validate_generated_dag,
     GOOD_DAG_PATTERNS,
 )
@@ -50,24 +49,36 @@ class SupervisorAgent(BaseAgent):
     ALLOWED_TOOLS = []  # Supervisor doesn't need tools
     VERSION = "2.0.0-llm-powered"  # Updated to LLM version
 
-    # Hardcoded rules for MVP (will be replaced with LLM logic)
+    # Hardcoded rules — fallback path only, used when LLM planning fails.
+    # research_agent/analysis_agent produce raw notes, not a deliverable, so
+    # real users get a coherent answer regardless of exact phrasing: these
+    # default to ending in writer_agent rather than requiring the user to
+    # separately say "write" or "report" (see SUPERVISOR_SYSTEM_PROMPT for
+    # the same principle applied to the LLM-powered path).
+    # Note: _match_agents_to_request() sorts by longest keyword phrase, not
+    # dict order, so multi-word phrases below correctly take priority over
+    # the shorter single-word groups regardless of listing order.
     KEYWORD_RULES = {
-        # Keywords that trigger research
-        ("research", "search", "find", "gather", "collect"): ["research_agent"],
-
-        # Keywords that trigger analysis
-        ("analyze", "compare", "evaluate", "metrics", "data"): ["analysis_agent"],
-
-        # Keywords that trigger both research and analysis
-        ("research and analyze", "analyze competitors", "research competitors"): ["research_agent", "analysis_agent"],
-
-        # Keywords that trigger writing
-        ("write", "report", "document", "generate", "create"): ["writer_agent"],
-
-        # Combined workflows (most common patterns)
+        ("research analyze and write", "comprehensive report", "detailed report"): ["research_agent", "analysis_agent", "writer_agent", "critic_agent"],
+        ("research and analyze", "analyze competitors", "research competitors"): ["research_agent", "analysis_agent", "writer_agent", "critic_agent"],
         ("research and write", "write about"): ["research_agent", "writer_agent"],
-        ("research analyze and write", "comprehensive report", "detailed report"): ["research_agent", "analysis_agent", "writer_agent"],
         ("analyze and write", "report on"): ["analysis_agent", "writer_agent"],
+
+        # Code + research combos run their source agents in parallel
+        ("research and code", "code and research", "calculate and research"): ["research_agent", "coding_agent", "writer_agent"],
+
+        # Code-oriented requests
+        ("write code", "python script", "calculate", "compute", "simulate", "algorithm"): ["coding_agent", "writer_agent"],
+
+        # Research-oriented requests: still end in writer_agent by default
+        ("research", "search", "find", "gather", "collect"): ["research_agent", "writer_agent"],
+
+        # Analysis-oriented requests: still end in writer_agent by default
+        ("analyze", "compare", "evaluate", "metrics", "data"): ["analysis_agent", "writer_agent"],
+
+        # Pure writing requests (no research/analysis keyword matched above) —
+        # assume the instruction itself has enough content to write from.
+        ("write", "report", "document", "generate", "create"): ["writer_agent"],
     }
 
     async def execute(self, task_input: TaskInput) -> TaskOutput:
@@ -96,8 +107,40 @@ class SupervisorAgent(BaseAgent):
                 agents_needed = self._match_agents_to_request(instruction.lower())
 
             if not agents_needed:
-                # Last resort: default to research
-                agents_needed = ["research_agent"]
+                # Last resort: research + synthesize, not raw research notes
+                agents_needed = ["research_agent", "writer_agent"]
+
+            # Skill-targeted agents must be in the plan: skills are
+            # instruction modules injected into specific agents — enabling
+            # one is meaningless if its target agent never runs. (Additive
+            # only; skills never REMOVE agents from the plan.)
+            enabled_skills = (task_input.context or {}).get("enabled_skills") or []
+            if enabled_skills:
+                from src.skills.catalog import SKILLS_BY_ID
+                targeted = {
+                    agent
+                    for sid in enabled_skills
+                    for agent in (SKILLS_BY_ID.get(sid).agents if SKILLS_BY_ID.get(sid) else [])
+                }
+                # Skip the all-agent skills (e.g. caveman) — they apply to
+                # whatever runs, they don't demand everything runs
+                if len(targeted) < len(self.AGENT_ORDER):
+                    for agent in self.AGENT_ORDER:
+                        if agent in targeted and agent not in agents_needed:
+                            agents_needed.append(agent)
+                    agents_needed = [a for a in self.AGENT_ORDER if a in agents_needed]
+
+            # Quality-gate POLICY (not left to the LLM planner): every fresh
+            # deliverable gets a critic review. The planner tends to omit the
+            # critic because RAG memory feeds it pre-critic historical plans;
+            # a platform guarantee shouldn't depend on prompt luck. Follow-up
+            # revisions skip it — the user is already steering quality by hand.
+            if (
+                "writer_agent" in agents_needed
+                and "critic_agent" not in agents_needed
+                and not (task_input.context or {}).get("follow_up")
+            ):
+                agents_needed.append("critic_agent")
 
             # Step 2: Build task DAG with dependencies
             task_dag = self._build_task_dag(
@@ -157,6 +200,14 @@ class SupervisorAgent(BaseAgent):
 
         return matched_agents
 
+    # Agents that gather primary material and can run CONCURRENTLY when the
+    # plan contains more than one of them (no data dependency between a web
+    # research pass and a coding pass — both start from the user request).
+    SOURCE_AGENTS = {"research_agent", "coding_agent"}
+
+    # Canonical pipeline order (used for skill-hint formatting)
+    AGENT_ORDER = ["research_agent", "coding_agent", "analysis_agent", "writer_agent", "critic_agent"]
+
     def _build_task_dag(
         self,
         agents: List[str],
@@ -164,42 +215,55 @@ class SupervisorAgent(BaseAgent):
         context: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """
-        Build a task DAG (list of tasks with dependencies).
+        Build a task DAG with real parallelism.
 
-        For MVP, dependencies are sequential (each task depends on the previous one).
-        Later: Can add parallel tasks, dynamic parallelization, etc.
+        Dependency rules:
+        - Source agents (research, coding) have no dependencies on each
+          other — Temporal executes them in the same wave, concurrently.
+        - Every non-source agent (analysis, writer) depends on ALL tasks
+          before it in the plan, joining the parallel branches.
+
+        Example: [research, coding, writer] →
+          t1 research (no deps) ─┐
+          t2 coding  (no deps) ─┴→ t3 writer (depends on t1, t2)
 
         Args:
-            agents: List of agent IDs in order
+            agents: List of agent IDs in plan order
             original_instruction: The original user instruction
             context: Request context
 
         Returns:
             List of task definitions with IDs and dependencies
         """
-        task_dag = []
-        previous_task_id = None
+        task_dag: List[Dict[str, Any]] = []
+        completed_ids: List[str] = []
 
         for i, agent_id in enumerate(agents):
             task_id = f"t{i + 1}"
 
-            # Create task input for this agent
+            if agent_id in self.SOURCE_AGENTS and all(
+                task_dag[j]["agent"] in self.SOURCE_AGENTS for j in range(i)
+            ):
+                # Still in the initial source wave — run concurrently
+                depends_on: List[str] = []
+            else:
+                # Join point: depend on everything planned so far
+                depends_on = list(completed_ids)
+
             task_input = self._create_task_input(
                 agent_id=agent_id,
                 instruction=original_instruction,
                 context=context,
-                previous_task_id=previous_task_id,
+                previous_task_id=depends_on[-1] if depends_on else None,
             )
 
-            task_def = {
+            task_dag.append({
                 "id": task_id,
                 "agent": agent_id,
                 "input": task_input,
-                "depends_on": [previous_task_id] if previous_task_id else [],
-            }
-
-            task_dag.append(task_def)
-            previous_task_id = task_id
+                "depends_on": depends_on,
+            })
+            completed_ids.append(task_id)
 
         return task_dag
 
@@ -232,11 +296,20 @@ class SupervisorAgent(BaseAgent):
         if agent_id == "research_agent":
             return f"Research and gather information on: {instruction}"
 
+        elif agent_id == "coding_agent":
+            return f"Write and execute Python code for the computational part of: {instruction}"
+
         elif agent_id == "analysis_agent":
             return f"Analyze the data/findings related to: {instruction}. {prev_note}Provide insights and patterns."
 
         elif agent_id == "writer_agent":
             return f"Write a professional report about: {instruction}. {prev_note}Make it well-structured, clear, and actionable."
+
+        elif agent_id == "critic_agent":
+            return (
+                f"Review the report produced for: {instruction}. {prev_note}"
+                "Score it against the upstream evidence and decide approve or revise."
+            )
 
         else:
             return instruction
@@ -300,10 +373,47 @@ class SupervisorAgent(BaseAgent):
                 print(f"Warning: Failed to retrieve memory context: {e}")
                 # Continue without memory context if retrieval fails
 
-            # Step 2: Create planning prompt (original + memory context)
-            planning_prompt = get_supervisor_planning_prompt(instruction)
+            # Step 2: Create planning prompt from the Prompt Registry
+            # (memory context and follow-up hints are runtime prefixes, not
+            # part of the versioned template)
+            registry = get_prompt_registry()
+            planning_prompt, _ = registry.render(
+                "supervisor_planning", instruction=instruction,
+            )
+            system_prompt, _ = registry.render("supervisor_system")
             if memory_context:
                 planning_prompt = memory_context + planning_prompt
+
+            # Skill hint: tell the planner which agents the user's enabled
+            # skills target so it includes them where relevant
+            enabled_skills = (task_input.context or {}).get("enabled_skills") or []
+            if enabled_skills:
+                from src.skills.catalog import SKILLS_BY_ID
+                skill_notes = [
+                    f"{SKILLS_BY_ID[s].label} (targets: {', '.join(SKILLS_BY_ID[s].agents)})"
+                    for s in enabled_skills if s in SKILLS_BY_ID
+                ]
+                if skill_notes:
+                    planning_prompt = (
+                        "The user enabled these skill modules for this workflow: "
+                        + "; ".join(skill_notes)
+                        + ". Include the targeted agents in your plan where relevant.\n\n"
+                        + planning_prompt
+                    )
+
+            # Follow-up runs continue an existing thread: the previous output
+            # is already available to the agents, so don't re-plan the full
+            # research pipeline for what is usually a revision request.
+            if (task_input.context or {}).get("follow_up"):
+                planning_prompt = (
+                    "NOTE: This is a FOLLOW-UP request refining previous work in an "
+                    "existing thread. The previous report/output is automatically "
+                    "provided to the agents. For revisions, reformatting, shortening, "
+                    "or tone changes prefer just [\"writer_agent\"]. Include "
+                    "research_agent only if genuinely new information must be "
+                    "gathered, analysis_agent only if new analysis is required.\n\n"
+                    + planning_prompt
+                )
 
             # Step 3: Get LLM Gateway
             llm_gateway = get_llm_gateway()
@@ -313,7 +423,7 @@ class SupervisorAgent(BaseAgent):
                 workflow_id=task_input.workflow_id,
                 agent_id=self.AGENT_ID,
                 messages=[
-                    {"role": "system", "content": SUPERVISOR_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": planning_prompt},
                 ],
                 task_type="reasoning",

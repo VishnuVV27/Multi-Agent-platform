@@ -63,6 +63,7 @@ class ToolGateway:
     AGENT_ROLES: Dict[str, AgentRole] = {
         "research_agent": AgentRole.RESEARCHER,
         "analysis_agent": AgentRole.ANALYST,
+        "coding_agent": AgentRole.DEVELOPER,
         "writer_agent": AgentRole.WRITER,
         "supervisor_agent": AgentRole.SUPERVISOR,
     }

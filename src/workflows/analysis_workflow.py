@@ -3,11 +3,12 @@ Analysis Workflow: Temporal workflow for Analysis Agent execution.
 """
 
 from temporalio import workflow, activity
-from dataclasses import dataclass
+from temporalio.common import RetryPolicy
+from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Dict, Any, Optional
 
 from src.agents.base import TaskInput, TaskOutput
-from src.agents.analysis_agent import AnalysisAgent
 
 
 @dataclass
@@ -16,13 +17,17 @@ class AnalysisWorkflowInput:
     task_id: str
     workflow_id: str
     instruction: str
-    context: Dict[str, Any] = None
+    context: Dict[str, Any] = field(default_factory=dict)
 
 
 # Activity: Execute Analysis Agent
 @activity.defn
 async def run_analysis_activity(input_data: AnalysisWorkflowInput) -> TaskOutput:
     """Execute Analysis Agent as a Temporal activity."""
+    # Imported locally: see research_workflow.py for why (litellm/httpx import
+    # chain trips Temporal's workflow sandbox if imported at module level).
+    from src.agents.analysis_agent import AnalysisAgent
+
     agent = AnalysisAgent()
 
     task_input = TaskInput(
@@ -47,6 +52,7 @@ class AnalysisWorkflow:
         output = await workflow.execute_activity(
             run_analysis_activity,
             input_data,
-            start_to_close_timeout=300,
+            start_to_close_timeout=timedelta(seconds=300),
+            retry_policy=RetryPolicy(maximum_attempts=3),
         )
         return output

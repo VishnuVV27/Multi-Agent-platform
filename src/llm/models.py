@@ -44,6 +44,16 @@ class ModelConfig:
 # Available models
 MODELS: Dict[str, ModelConfig] = {
     # OpenAI models
+    "gpt-4.1-nano": ModelConfig(
+        name="gpt-4.1-nano",
+        provider=Provider.OPENAI,
+        capability=ModelCapability.BASIC,
+        input_cost_per_1k_tokens=0.0001,
+        output_cost_per_1k_tokens=0.0004,
+        max_input_tokens=1047576,
+        max_output_tokens=32768,
+        fallback_model="gpt-3.5-turbo",
+    ),
     "gpt-4": ModelConfig(
         name="gpt-4",
         provider=Provider.OPENAI,
@@ -104,12 +114,15 @@ MODELS: Dict[str, ModelConfig] = {
     ),
 }
 
-# Default models for different task types
+# Default models for different task types — all routed to gpt-4.1-nano
+# (cheapest/fastest current tier) per user request. Swap individual entries
+# back to a heavier model (e.g. "gpt-4-turbo") if quality suffers for
+# reasoning-heavy agents like the supervisor or writer.
 MODEL_ROUTING: Dict[str, str] = {
-    "reasoning": "gpt-4-turbo",  # Complex planning
-    "coding": "gpt-4",  # Code generation
-    "fast": "gpt-3.5-turbo",  # Quick/cheap tasks
-    "default": "gpt-3.5-turbo",
+    "reasoning": "gpt-4.1-nano",
+    "coding": "gpt-4.1-nano",
+    "fast": "gpt-4.1-nano",
+    "default": "gpt-4.1-nano",
 }
 
 # Model routing by capability level

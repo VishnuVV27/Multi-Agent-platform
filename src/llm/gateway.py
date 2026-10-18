@@ -10,7 +10,7 @@ Responsibilities:
 - Rate limiting integration (placeholder)
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 import litellm
 from litellm import completion, acompletion
 import asyncio
@@ -33,7 +33,7 @@ class LLMGateway:
         """Initialize gateway."""
         # Configure LiteLLM
         litellm.drop_params = True
-        litellm.set_verbose = settings.LITELLM_LOG
+        litellm.set_verbose = settings.LITELLM_VERBOSE
 
         # Set API keys from environment
         if settings.OPENAI_API_KEY:
@@ -50,6 +50,7 @@ class LLMGateway:
         max_tokens: Optional[int] = None,
         temperature: float = 0.7,
         model: Optional[str] = None,
+        on_chunk: Optional[Callable[[str], None]] = None,
     ) -> Dict[str, Any]:
         """
         Generate text using an LLM.
@@ -62,6 +63,10 @@ class LLMGateway:
             max_tokens: Maximum output tokens
             temperature: Sampling temperature
             model: Specific model to use (optional, will route if not specified)
+            on_chunk: Optional callback invoked with the ACCUMULATED text as
+                tokens stream in — enables live progress (Mission Control
+                monitors). When set, the request runs in streaming mode;
+                callback errors are swallowed so UI plumbing can't fail a task.
 
         Returns:
             {
@@ -88,18 +93,53 @@ class LLMGateway:
             )
 
             # Step 3: Call LLM through LiteLLM
-            response = await acompletion(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_output_tokens,
-                temperature=temperature,
-                timeout=60,
-            )
+            if on_chunk is not None:
+                # Streaming path: accumulate deltas, surface them to the
+                # callback, and pull real usage from the final chunk
+                # (include_usage) with a length-based fallback.
+                stream = await acompletion(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=max_output_tokens,
+                    temperature=temperature,
+                    timeout=120,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+                generated_text = ""
+                usage = None
+                async for chunk in stream:
+                    delta = None
+                    try:
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta.content
+                    except (AttributeError, IndexError):
+                        delta = None
+                    if delta:
+                        generated_text += delta
+                        try:
+                            on_chunk(generated_text)
+                        except Exception:
+                            pass
+                    chunk_usage = getattr(chunk, "usage", None)
+                    if chunk_usage:
+                        usage = chunk_usage
 
-            # Step 4: Extract response
-            generated_text = response.choices[0].message.content
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
+                input_tokens = getattr(usage, "prompt_tokens", None) or max(1, len(prompt) // 4)
+                output_tokens = getattr(usage, "completion_tokens", None) or max(1, len(generated_text) // 4)
+            else:
+                response = await acompletion(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=max_output_tokens,
+                    temperature=temperature,
+                    timeout=60,
+                )
+
+                # Step 4: Extract response
+                generated_text = response.choices[0].message.content
+                input_tokens = response.usage.prompt_tokens
+                output_tokens = response.usage.completion_tokens
 
             # Step 5: Track cost
             cost_tracker = get_cost_tracker()
@@ -137,6 +177,7 @@ class LLMGateway:
                         max_tokens=max_tokens,
                         temperature=temperature,
                         model=model_config.fallback_model,
+                        on_chunk=on_chunk,
                     )
                 except Exception as fallback_error:
                     raise LLMException(f"Primary model failed: {e}. Fallback also failed: {fallback_error}")
@@ -259,15 +300,17 @@ class LLMGateway:
 
         Args:
             text: Text to embed
-            model: Embedding model (default: Claude embeddings)
+            model: Embedding model (default: OpenAI text-embedding-3-small,
+                1536 dimensions — matches the pgvector column in
+                WorkflowMemoryORM). Anthropic does not offer a public
+                embeddings API, so "claude" is never a valid value here.
 
         Returns:
             {"data": [{"embedding": [...]}], "model": "..."}
         """
         try:
-            # Use Claude embeddings API via LiteLLM
             response = await litellm.aembedding(
-                model="claude",
+                model=model,
                 input=text,
             )
 

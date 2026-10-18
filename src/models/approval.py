@@ -10,7 +10,7 @@ from datetime import datetime
 import uuid
 import enum
 
-from src.infrastructure.database import Base
+from src.models.base import Base
 
 
 class ApprovalStatus(str, enum.Enum):

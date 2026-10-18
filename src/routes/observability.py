@@ -7,11 +7,10 @@ Endpoints for Langfuse traces, evaluation metrics, and performance analytics.
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 
-from src.observability.evaluation_service import EvaluationService
+from src.observability.evaluation_service import get_evaluation_service
 from src.observability.langfuse_client import get_langfuse_client
 
 router = APIRouter(prefix="/api/observability", tags=["observability"])
-eval_service = EvaluationService()
 
 
 @router.get("/summary")
@@ -25,7 +24,7 @@ async def get_observability_summary():
     - Agent success rates
     """
     try:
-        summary = eval_service.get_summary()
+        summary = get_evaluation_service().get_summary()
         return summary
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get summary: {str(e)}")
@@ -46,10 +45,29 @@ async def get_cost_metrics(days: int = Query(7, ge=1, le=90)):
     - Average cost per request
     """
     try:
-        metrics = eval_service.get_cost_metrics(days=days)
+        metrics = get_evaluation_service().get_cost_metrics(days=days)
         return metrics
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get cost metrics: {str(e)}")
+
+
+@router.get("/metrics/costs/daily")
+async def get_daily_cost_metrics(days: int = Query(7, ge=1, le=90)):
+    """Get total cost grouped by day for the last N days."""
+    try:
+        series = get_evaluation_service().get_daily_cost_series(days=days)
+        return {"days": days, "series": series}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get daily cost series: {str(e)}")
+
+
+@router.get("/metrics/success-rate")
+async def get_success_rate_metrics(days: int = Query(7, ge=1, le=90)):
+    """Get platform-wide success rate across all agents."""
+    try:
+        return get_evaluation_service().get_overall_success_rate(days=days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get success rate: {str(e)}")
 
 
 @router.get("/metrics/latency")
@@ -63,7 +81,7 @@ async def get_latency_metrics():
     - Sample counts
     """
     try:
-        metrics = eval_service.get_latency_metrics()
+        metrics = get_evaluation_service().get_latency_metrics()
         return {"latency_by_agent": metrics}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get latency metrics: {str(e)}")
@@ -89,7 +107,7 @@ async def get_agent_metrics(
     - Successful runs
     """
     try:
-        metrics = eval_service.get_agent_success_rate(agent_id=agent_id, days=days)
+        metrics = get_evaluation_service().get_agent_success_rate(agent_id=agent_id, days=days)
         if not metrics:
             raise HTTPException(status_code=404, detail=f"No metrics found for agent: {agent_id}")
         return metrics
@@ -119,7 +137,7 @@ async def compare_prompts(
     - Improvement percentage
     """
     try:
-        comparison = eval_service.compare_prompt_versions(
+        comparison = get_evaluation_service().compare_prompt_versions(
             agent_id=agent_id,
             version1=version1,
             version2=version2

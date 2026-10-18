@@ -6,12 +6,11 @@ Uses PostgreSQL + pgvector for semantic search.
 
 from datetime import datetime
 import uuid
-from sqlalchemy import Column, String, Text, Float, Integer, Boolean, DateTime, ARRAY
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, String, Text, Float, Integer, Boolean, DateTime, ARRAY, Computed, Index
+from sqlalchemy.dialects.postgresql import UUID, TSVECTOR
 from pgvector.sqlalchemy import Vector
 
-Base = declarative_base()
+from src.models.base import Base
 
 
 class WorkflowMemoryORM(Base):
@@ -30,7 +29,15 @@ class WorkflowMemoryORM(Base):
 
     # User request
     user_request = Column(Text, nullable=False)
-    # 1536-dimensional embedding from Claude API
+    # Full-text search lexemes, kept in sync by Postgres itself (generated
+    # column). Powers the sparse half of hybrid retrieval: stemming, stop
+    # words, and ts_rank scoring instead of brittle ILIKE substring matching.
+    request_tsv = Column(
+        TSVECTOR,
+        Computed("to_tsvector('english', coalesce(user_request, ''))", persisted=True),
+        nullable=True,
+    )
+    # 1536-dimensional embedding (OpenAI text-embedding-3-small via LiteLLM)
     request_embedding = Column(Vector(1536), nullable=False)
 
     # Agent execution
@@ -55,6 +62,14 @@ class WorkflowMemoryORM(Base):
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index(
+            "workflow_memories_request_tsv_idx",
+            "request_tsv",
+            postgresql_using="gin",
+        ),
+    )
 
     def __repr__(self):
         return f"<WorkflowMemory {self.workflow_id}>"

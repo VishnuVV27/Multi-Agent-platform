@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", 8000))
     API_LOG_LEVEL: str = os.getenv("API_LOG_LEVEL", "INFO")
+    # Echo every SQL statement to stdout — opt-in only; it drowns real logs
+    LOG_SQL: bool = os.getenv("LOG_SQL", "false").lower() == "true"
 
     # Database
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
@@ -24,7 +26,10 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
-        return f"postgresql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        # "+psycopg" selects psycopg3 (the driver declared in pyproject.toml).
+        # psycopg3 supports both sync and async, so the same URL scheme works
+        # for get_db_engine() (sync) and get_async_engine() (async) below.
+        return f"postgresql+psycopg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     # Redis
     REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
@@ -60,7 +65,12 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
 
     # LiteLLM
-    LITELLM_LOG: bool = os.getenv("LITELLM_LOG", "TRUE").lower() == "true"
+    # Note: field name deliberately does NOT match the LITELLM_LOG env var —
+    # litellm itself reads LITELLM_LOG directly from the process environment
+    # (via its own dotenv auto-load) as a Python logging level name (e.g.
+    # "INFO"), so this app-level verbosity toggle must use a different name
+    # to avoid pydantic trying to coerce that same string into a bool.
+    LITELLM_VERBOSE: bool = os.getenv("LITELLM_VERBOSE", "false").lower() == "true"
     LITELLM_CACHE: bool = os.getenv("LITELLM_CACHE", "false").lower() == "true"
 
     # Observability - Langfuse
@@ -76,6 +86,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # .env has extra/legacy keys (e.g. LANGFUSE_BASE_URL) not declared as fields
 
 
 settings = Settings()

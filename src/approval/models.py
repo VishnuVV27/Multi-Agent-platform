@@ -57,15 +57,13 @@ class ApprovalResponse(BaseModel):
 
 
 class ApproveRequest(BaseModel):
-    """Request to approve an approval."""
-    approval_id: str
+    """Request to approve an approval. The approval ID comes from the URL path."""
     approved_by: str = Field(..., description="User ID approving")
     comments: Optional[str] = None
 
 
 class RejectRequest(BaseModel):
-    """Request to reject an approval."""
-    approval_id: str
+    """Request to reject an approval. The approval ID comes from the URL path."""
     rejected_by: str = Field(..., description="User ID rejecting")
     reason: str = Field(..., description="Reason for rejection")
 
