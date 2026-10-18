@@ -13,7 +13,7 @@ Later: Postgres + Redis cache.
 """
 
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.agents.base import BaseAgent, AGENT_REGISTRY as _AGENT_CLASS_REGISTRY
 
@@ -37,8 +37,8 @@ class AgentRegistry:
                 "status": "healthy",
                 "capabilities": [cap.value for cap in agent_instance.CAPABILITIES],
                 "allowed_tools": agent_instance.ALLOWED_TOOLS,
-                "registered_at": datetime.utcnow().isoformat(),
-                "last_heartbeat": datetime.utcnow().isoformat(),
+                "registered_at": datetime.now(timezone.utc).isoformat(),
+                "last_heartbeat": datetime.now(timezone.utc).isoformat(),
             }
 
     def get_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
@@ -87,7 +87,7 @@ class AgentRegistry:
     def heartbeat(self, agent_id: str) -> bool:
         """Record a heartbeat for an agent."""
         if agent_id in self._agents:
-            self._agents[agent_id]["last_heartbeat"] = datetime.utcnow().isoformat()
+            self._agents[agent_id]["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
             self._agents[agent_id]["status"] = "healthy"
             return True
         return False
