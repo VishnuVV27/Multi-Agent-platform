@@ -16,7 +16,7 @@ A production-grade, orchestration-first multi-agent AI platform built with Tempo
 ### 1. Clone and Setup
 
 ```bash
-cd /Users/vishnu/Documents/Multi_Agent_AI_Platform
+cd Multi-Agent-platform
 cp .env.example .env
 ```
 

@@ -50,7 +50,7 @@ NO VIOLET ✅        — Only blue/red/orange/emerald/green
 ### **Terminal 1 - Start All Infrastructure**
 
 ```bash
-cd /Users/vishnu/Documents/Multi_Agent_AI_Platform
+cd Multi-Agent-platform
 
 # Start everything
 docker-compose up -d
