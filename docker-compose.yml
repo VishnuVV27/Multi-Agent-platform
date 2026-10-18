@@ -77,7 +77,6 @@ services:
         condition: service_healthy
     ports:
       - "${TEMPORAL_PORT:-7233}:7233"
-      - "${TEMPORAL_UI_PORT:-8080}:8080"
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -87,13 +86,26 @@ services:
     volumes:
       - temporal_data:/var/lib/temporal
     healthcheck:
-      # "tctl workflow list" needs a default namespace + reachable frontend
-      # and fails inside auto-setup even when the server is fine; cluster
-      # health is the intended liveness probe.
-      test: ["CMD", "tctl", "--address", "127.0.0.1:7233", "cluster", "health"]
+      # auto-setup's temporal-server binds to the container's own network IP,
+      # not 127.0.0.1, so the healthcheck has to dial it by service hostname
+      # (Docker Compose networks resolve a container's own service name back
+      # to itself) or it reports unhealthy even when the server is fine.
+      test: ["CMD", "tctl", "--address", "temporal:7233", "cluster", "health"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Temporal Web UI — auto-setup does not bundle it, it's a separate service
+  temporal-ui:
+    image: temporalio/ui:latest
+    depends_on:
+      temporal:
+        condition: service_healthy
+    ports:
+      - "${TEMPORAL_UI_PORT:-8080}:8080"
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
 
 volumes:
   postgres_data:
