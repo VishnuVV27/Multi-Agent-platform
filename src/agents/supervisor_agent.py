@@ -471,5 +471,4 @@ class SupervisorAgent(BaseAgent):
         return {
             **super().get_manifest(),
             "planning_method": "llm_powered",
-            "version": "2.0.0",
         }

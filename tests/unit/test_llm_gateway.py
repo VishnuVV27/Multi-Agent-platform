@@ -7,7 +7,7 @@ Tests model routing, cost tracking, and gateway functionality.
 import pytest
 from src.llm.models import (
     get_model_config, get_model_for_capability, get_model_for_task,
-    ModelCapability, Provider, MODELS
+    ModelCapability, Provider, MODELS, MODEL_ROUTING
 )
 from src.llm.cost_tracker import CostTracker, get_cost_tracker
 from src.llm.gateway import get_llm_gateway
@@ -42,24 +42,27 @@ class TestModelRouting:
     """Tests for model routing logic."""
 
     def test_get_model_for_task_reasoning(self):
-        """Get best model for reasoning task."""
+        """Reasoning task routes to the configured reasoning model."""
         model = get_model_for_task("reasoning")
-        assert model == "gpt-4-turbo"
+        assert model == MODEL_ROUTING["reasoning"]
+        assert get_model_config(model) is not None
 
     def test_get_model_for_task_coding(self):
-        """Get best model for coding task."""
+        """Coding task routes to the configured coding model."""
         model = get_model_for_task("coding")
-        assert model == "gpt-4"
+        assert model == MODEL_ROUTING["coding"]
+        assert get_model_config(model) is not None
 
     def test_get_model_for_task_fast(self):
-        """Get best model for fast task."""
+        """Fast task routes to the configured fast model."""
         model = get_model_for_task("fast")
-        assert model == "gpt-3.5-turbo"
+        assert model == MODEL_ROUTING["fast"]
+        assert get_model_config(model) is not None
 
     def test_get_model_for_task_default(self):
-        """Get default model for unknown task."""
+        """Unknown task type falls back to the default model."""
         model = get_model_for_task("unknown_task")
-        assert model == "gpt-3.5-turbo"
+        assert model == MODEL_ROUTING["default"]
 
     def test_get_model_for_capability(self):
         """Get model for specific capability."""

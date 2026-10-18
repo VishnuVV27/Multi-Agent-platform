@@ -9,6 +9,8 @@ from typing import Generator
 from src.agents.base import TaskInput, TaskOutput, AgentStatus
 from src.agents.supervisor_agent import SupervisorAgent
 from src.agents.research_agent import ResearchAgent
+from src.infrastructure.database import init_db
+from src.infrastructure.redis_client import init_redis
 
 
 @pytest.fixture(scope="session")
@@ -17,6 +19,18 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+async def _infra():
+    """
+    Several "unit" tests exercise real DB/Redis-backed services (approval
+    service, embedding cache) rather than pure logic, so they need a live
+    Postgres + Redis — same ones docker-compose.yml brings up for local dev,
+    and the same two services the CI workflow runs as service containers.
+    """
+    await init_db()
+    await init_redis()
 
 
 @pytest.fixture

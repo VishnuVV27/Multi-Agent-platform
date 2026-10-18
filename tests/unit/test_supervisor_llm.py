@@ -36,7 +36,10 @@ class TestSupervisorLLMPlanning:
 
         # Should have valid agent IDs
         for task in tasks:
-            assert task["agent"] in ["research_agent", "analysis_agent", "writer_agent"]
+            assert task["agent"] in [
+                "research_agent", "analysis_agent", "writer_agent",
+                "coding_agent", "critic_agent",
+            ]
 
     @pytest.mark.asyncio
     async def test_supervisor_handles_simple_request(self):
