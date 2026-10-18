@@ -182,9 +182,14 @@ class WriterAgent(BaseAgent):
             elif "analysis" in result:  # analysis agent output
                 blocks.append(f"[{task_id}] Analysis:\n{result['analysis']}")
             elif "content" in result:  # prior writer output (follow-up thread)
+                # 8000 chars, not the 2000-4000 used for other upstream types:
+                # the writer's own prompt targets 500-1000 words (~4000-7000
+                # chars with markdown), and a tighter cap here was truncating
+                # the References section at the end of the draft, so a
+                # revision pass lost the real source URLs and fabricated ones.
                 blocks.append(
                     f"[{task_id}] Previous report (revise/extend this — do not "
-                    f"start over unless asked):\n{str(result['content'])[:4000]}"
+                    f"start over unless asked):\n{str(result['content'])[:8000]}"
                 )
             else:
                 blocks.append(f"[{task_id}] {json.dumps(result, default=str)[:2000]}")
